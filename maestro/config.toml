@@ -1,0 +1,14 @@
+[[providers]]
+name = "ollama"
+endpoint = "http://127.0.0.1:11434/v1"
+auth_mode = "none"
+timeout_ms = 10000
+models = ["deepseek-coder-v2"]
+max_context_chars = 128000
+
+[runtime]
+retry_max_attempts = 3
+max_concurrency = 4
+rate_limit_per_minute = 120
+default_provider = "ollama"
+default_model = "deepseek-coder-v2"

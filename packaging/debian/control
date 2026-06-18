@@ -1,0 +1,10 @@
+Package: maestro-ai
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: {{ARCH}}
+Maintainer: Maestro Team <maestro@example.com>
+Depends: libc6 (>= 2.31)
+Description: Maestro multi-agent orchestrator
+ Terminal-first multi-agent orchestrator with CLI and TUI.
+ Includes markdown governance workflows and persona-based collaboration.

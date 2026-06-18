@@ -1,0 +1,30 @@
+# Maintainer: Maestro Team
+pkgname=maestro-ai
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Maestro multi-agent orchestrator"
+arch=('x86_64' 'aarch64')
+url="https://github.com/example/maestro"
+license=('MIT')
+makedepends=('cargo')
+depends=('glibc')
+options=(!lto)
+source=("${pkgname}-${pkgver}.tar.gz")
+sha256sums=('SKIP')
+backup=('etc/maestro/config.toml')
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  cargo build --release --locked
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+
+  install -Dm755 target/release/maestro "${pkgdir}/usr/bin/maestro"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 packaging/omarchy/config.toml "${pkgdir}/etc/maestro/config.toml"
+
+  install -dm755 "${pkgdir}/var/lib/maestro"
+  install -dm755 "${pkgdir}/var/log/maestro"
+}

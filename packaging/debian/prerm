@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+# Stop hooks for future service integration.
+exit 0

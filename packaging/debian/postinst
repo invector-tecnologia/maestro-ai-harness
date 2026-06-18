@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+install -d -m 0755 /etc/maestro
+install -d -m 0755 /var/lib/maestro
+install -d -m 0755 /var/log/maestro
+
+if [ ! -f /etc/maestro/config.toml ]; then
+  cat > /etc/maestro/config.toml <<'EOF'
+[[providers]]
+name = "ollama"
+endpoint = "http://127.0.0.1:11434/v1"
+auth_mode = "none"
+timeout_ms = 5000
+models = ["deepseek-coder-v2"]
+
+[runtime]
+retry_max_attempts = 3
+max_concurrency = 4
+rate_limit_per_minute = 120
+default_provider = "ollama"
+default_model = "deepseek-coder-v2"
+EOF
+  chmod 0644 /etc/maestro/config.toml
+fi
+
+exit 0

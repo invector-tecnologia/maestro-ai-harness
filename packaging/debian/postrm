@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  remove)
+    # Preserve user config and state on normal uninstall.
+    ;;
+  purge)
+    rm -rf /etc/maestro
+    rm -rf /var/lib/maestro
+    rm -rf /var/log/maestro
+    ;;
+  *)
+    ;;
+esac
+
+exit 0
