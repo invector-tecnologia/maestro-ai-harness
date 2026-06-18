@@ -5,7 +5,7 @@ Welcome to **Maestro AI Harness**! If you have never used a terminal tool before
 The terminal might seem daunting, but with Maestro, it will transform into a friendly and powerful control panel!
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/invector-tecnologia/maestro-multi-agents/main/docs/assets/dream-tui.png" alt="Maestro Dream TUI" width="800">
+  <img src="https://raw.githubusercontent.com/invector-tecnologia/maestro-ai-harness/main/docs/assets/dream-tui.png" alt="Maestro Dream TUI" width="800">
 </p>
 
 ---
