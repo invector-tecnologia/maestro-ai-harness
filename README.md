@@ -1,6 +1,6 @@
-# 🎼 Maestro AI Harness: Your New Digital Leader (User Manual)
+# 🎼 Maestro Harness for AI
 
-Welcome to **Maestro AI Harness**! If you have never used a terminal tool before, do not worry: this manual was made to hold your hand and guide you step-by-step. 
+Welcome to **Maestro Harness for AI**! If you have never used a terminal tool before, do not worry: this manual was made to hold your hand and guide you step-by-step. 
 
 The terminal might seem daunting, but with Maestro, it will transform into a friendly and powerful control panel!
 
@@ -12,7 +12,7 @@ The terminal might seem daunting, but with Maestro, it will transform into a fri
 
 ## 🌟 Welcome and About Maestro
 
-**Maestro AI Harness** acts exactly as a relentless *Tech Lead*. Instead of coordinating human developers, **it coordinates, tests, and manages a team of Artificial Intelligences (AIs)** to plan and build software for you.
+**Maestro Harness for AI** acts exactly as a relentless *Tech Lead*. Instead of coordinating human developers, **it coordinates, tests, and manages a team of Artificial Intelligences (AIs)** to plan and build software for you.
 
 Built with **Rust** (making it incredibly fast and safe), it offers a "TUI" (Terminal User Interface). This means you will have menus, tables, logs, and visual shortcuts directly in your terminal, without needing to memorize dozens of commands.
 
