@@ -132,6 +132,25 @@ Logs are written to the `maestro.log` file in the current directory.
 
 Before any release, quality is validated. There is a single Quality Gate that can be run via `./scripts/quality-gate.sh`. There is also a local script to package and publish releases on GitHub: `./scripts/publish-github.sh v0.1.0`.
 
+### Pull Request Governance Gate
+
+This repository enforces PR governance through `.github/workflows/ai-governance-gate.yml`.
+
+Required PR body structure:
+1. `## Linked Plan Task` with exactly one line in this format:
+  - `- Path: docs/Maestro_Execution_Plans/tasks/<task>.md`
+2. `## Acceptance Criteria` using IDs like `AC1`, `AC2`, `AC3`.
+3. `## Validation Evidence` including one evidence line per AC ID.
+
+The minimum number of acceptance criteria is configurable through the repository variable `MIN_ACCEPTANCE_ITEMS`.
+
+If `MIN_ACCEPTANCE_ITEMS` is not set, CI uses the default value `3`.
+
+How to set it in GitHub:
+1. Open repository settings.
+2. Go to `Secrets and variables` > `Actions` > `Variables`.
+3. Create `MIN_ACCEPTANCE_ITEMS` with a numeric value (for example: `4`).
+
 The project is distributed under the MIT License.
 
 ---

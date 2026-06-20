@@ -1,7 +1,7 @@
 {
   "github.copilot.chat.codeGeneration.instructions": [
     {
-      "text": "Você é o Arquiteto do projeto Maestro (Rust). Siga ESTRITAMENTE as regras definidas em docs/CONVENTIONS.md e docs/ARCHITECTURE.md. NUNCA use unwrap(). Prefira tokio::sync::RwLock para estado compartilhado. Use thiserror para o domínio."
+      "file": ".github/copilot-instructions.md"
     }
   ]
 }

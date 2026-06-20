@@ -1,0 +1,142 @@
+name: AI Governance Gate
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  pr-checklist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate PR template checklist markers
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$(mktemp)"
+          printf '%s\n' "$PR_BODY" > "$BODY_FILE"
+
+          required_checked_items=(
+            "Spec updated or explicitly confirmed unchanged"
+            "Acceptance criteria validated with evidence"
+            "Architecture boundaries respected"
+            "Convention checks respected"
+            "Tests added or updated for changed behavior"
+          )
+
+          for item in "${required_checked_items[@]}"; do
+            if ! grep -Eiq "^- \[(x|X)\] ${item}" "$BODY_FILE"; then
+              echo "Required checklist item is not checked: $item"
+              exit 1
+            fi
+          done
+
+      - name: Validate linked plan task or explicit justification
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          BODY_FILE="$(mktemp)"
+          printf '%s\n' "$PR_BODY" > "$BODY_FILE"
+
+          standardized_line_count="$(grep -Ec '^- Path:[[:space:]]*docs/Maestro_Execution_Plans/tasks/[A-Za-z0-9._/-]+\.md[[:space:]]*$' "$BODY_FILE")"
+          if [[ "$standardized_line_count" -ne 1 ]]; then
+            echo "Linked Plan Task must contain exactly one standardized line:"
+            echo "- Path: docs/Maestro_Execution_Plans/tasks/<task>.md"
+            exit 1
+          fi
+
+          mapfile -t unique_paths < <(grep -Eo 'docs/Maestro_Execution_Plans/tasks/[A-Za-z0-9._/-]+\.md' "$BODY_FILE" | sort -u)
+          if [[ "${#unique_paths[@]}" -ne 1 ]]; then
+            echo "Exactly one unique task path is allowed in PR body."
+            printf 'Found paths:\n%s\n' "${unique_paths[*]:-<none>}"
+            exit 1
+          fi
+
+          task_path="${unique_paths[0]}"
+          if [[ ! -f "$task_path" ]]; then
+            echo "Linked plan task does not exist in repository: $task_path"
+            exit 1
+          fi
+
+          echo "Linked plan task validated: $task_path"
+
+  acceptance-criteria:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate acceptance criteria count and evidence mapping
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          MIN_ACCEPTANCE_ITEMS: ${{ vars.MIN_ACCEPTANCE_ITEMS }}
+          DEFAULT_MIN_ACCEPTANCE_ITEMS: "3"
+        run: |
+          set -euo pipefail
+          BODY_FILE="$(mktemp)"
+          printf '%s\n' "$PR_BODY" > "$BODY_FILE"
+
+          effective_min_items="${MIN_ACCEPTANCE_ITEMS:-$DEFAULT_MIN_ACCEPTANCE_ITEMS}"
+          if [[ ! "$effective_min_items" =~ ^[0-9]+$ ]]; then
+            echo "MIN_ACCEPTANCE_ITEMS must be numeric. Current value: $effective_min_items"
+            exit 1
+          fi
+
+          if [[ "$effective_min_items" -lt 1 ]]; then
+            echo "MIN_ACCEPTANCE_ITEMS must be >= 1. Current value: $effective_min_items"
+            exit 1
+          fi
+
+          criteria_section_file="$(mktemp)"
+          awk '
+            BEGIN { in_section = 0 }
+            /^##[[:space:]]+Acceptance Criteria[[:space:]]*$/ { in_section = 1; next }
+            /^##[[:space:]]+/ { if (in_section == 1) exit; next }
+            { if (in_section == 1) print }
+          ' "$BODY_FILE" > "$criteria_section_file"
+
+          mapfile -t criteria_ids < <(grep -Eo '\bAC[0-9]+\b' "$criteria_section_file" | sort -u)
+          criteria_count="${#criteria_ids[@]}"
+
+          if [[ "$criteria_count" -lt "$effective_min_items" ]]; then
+            echo "Acceptance Criteria must list at least $effective_min_items AC items. Found: $criteria_count"
+            exit 1
+          fi
+
+          evidence_section_file="$(mktemp)"
+          awk '
+            BEGIN { in_section = 0 }
+            /^##[[:space:]]+Validation Evidence[[:space:]]*$/ { in_section = 1; next }
+            /^##[[:space:]]+/ { if (in_section == 1) exit; next }
+            { if (in_section == 1) print }
+          ' "$BODY_FILE" > "$evidence_section_file"
+
+          if [[ ! -s "$evidence_section_file" ]]; then
+            echo "Validation Evidence section is missing or empty."
+            exit 1
+          fi
+
+          mapfile -t evidence_ids < <(grep -Eo '\bAC[0-9]+\b' "$evidence_section_file" | sort -u)
+          evidence_blob=" ${evidence_ids[*]} "
+
+          for criterion_id in "${criteria_ids[@]}"; do
+            if [[ "$evidence_blob" != *" $criterion_id "* ]]; then
+              echo "Missing validation evidence for $criterion_id"
+              exit 1
+            fi
+          done
+
+          echo "Acceptance Criteria validated with $criteria_count items and complete evidence mapping."
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test
+        run: cargo test --all-targets
