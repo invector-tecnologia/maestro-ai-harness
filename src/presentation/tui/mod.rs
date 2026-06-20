@@ -101,9 +101,8 @@ pub struct TuiApp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnboardingBootstrap {
-    Auto,
-    UserIntro,
-    ProjectSetup,
+    Fast,
+    Detailed,
 }
 
 impl TuiApp {
@@ -762,16 +761,26 @@ pub async fn run_tui(
         }
     }
 
-    // Initialize interview mode if configuration needs setup
-    if !app.readiness.is_ready() && _bootstrap != OnboardingBootstrap::UserIntro {
-        app.logs
-            .push("💬 Starting setup interview with Maestro...".to_string());
-        app.mode = UIMode::Interview;
-        app.interview_bot = Some(Arc::new(
-            crate::application::interview_bot::InterviewBot::new(),
-        ));
-        let session = crate::application::interview_bot::InterviewSession::default();
-        app.interview_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
+    // Detailed onboarding opens the interview when the workspace is not ready.
+    if !app.readiness.is_ready() {
+        match _bootstrap {
+            OnboardingBootstrap::Detailed => {
+                app.logs
+                    .push("💬 Starting setup interview with Maestro...".to_string());
+                app.mode = UIMode::Interview;
+                app.interview_bot = Some(Arc::new(
+                    crate::application::interview_bot::InterviewBot::new(),
+                ));
+                let session = crate::application::interview_bot::InterviewSession::default();
+                app.interview_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
+            }
+            OnboardingBootstrap::Fast => {
+                app.logs.push(
+                    "🚀 Fast onboarding is using safe defaults. Run 'maestro onboarding --mode detailed' for guided setup."
+                        .to_string(),
+                );
+            }
+        }
     }
 
     let mut events = EventStream::new();

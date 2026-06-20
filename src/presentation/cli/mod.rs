@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tracing::{info, warn};
 
 use crate::application::agent_runtime::AgentRuntime;
@@ -19,6 +19,12 @@ use crate::infrastructure::llm::provider_registry::ProviderRegistry;
 use crate::infrastructure::rag::local_hybrid_index::LocalHybridIndex;
 use crate::infrastructure::rag::ollama_embedder::OllamaEmbedder;
 use crate::presentation::tui::{run_tui, OnboardingBootstrap};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum OnboardingMode {
+    Fast,
+    Detailed,
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "maestro", about = "Maestro Multi-Agent Orchestrator")]
@@ -42,8 +48,8 @@ pub enum Commands {
     Onboarding {
         #[arg(long)]
         config: Option<PathBuf>,
-        #[arg(long, default_value = "user")]
-        mode: String,
+        #[arg(long, value_enum, default_value_t = OnboardingMode::Detailed)]
+        mode: OnboardingMode,
     },
     ValidateConfig {
         #[arg(long)]
@@ -160,7 +166,8 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                 (None, None)
             };
 
-            let tui_result = run_tui(environment, runtime.clone(), OnboardingBootstrap::Auto).await;
+            let tui_result =
+                run_tui(environment, runtime.clone(), OnboardingBootstrap::Detailed).await;
             if let Some(rt) = runtime {
                 let _ = rt.stop_all().await;
             }
@@ -188,10 +195,9 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                 (None, None)
             };
 
-            let bootstrap = match mode.to_lowercase().as_str() {
-                "user" | "usuario" => OnboardingBootstrap::UserIntro,
-                "project" | "projeto" => OnboardingBootstrap::ProjectSetup,
-                _ => OnboardingBootstrap::Auto,
+            let bootstrap = match mode {
+                OnboardingMode::Fast => OnboardingBootstrap::Fast,
+                OnboardingMode::Detailed => OnboardingBootstrap::Detailed,
             };
 
             let tui_result = run_tui(environment, runtime.clone(), bootstrap).await;
@@ -496,10 +502,25 @@ default_model = "deepseek-coder-v2"
 
     #[test]
     fn parses_onboarding_command() {
-        let cli = Cli::parse_from(["maestro", "onboarding", "--mode", "projeto"]);
+        let cli = Cli::parse_from(["maestro", "onboarding", "--mode", "fast"]);
         assert!(matches!(
             cli.command,
-            Some(Commands::Onboarding { mode, .. }) if mode == "projeto"
+            Some(Commands::Onboarding {
+                mode: OnboardingMode::Fast,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_detailed_onboarding_command_by_default() {
+        let cli = Cli::parse_from(["maestro", "onboarding"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Onboarding {
+                mode: OnboardingMode::Detailed,
+                ..
+            })
         ));
     }
 
