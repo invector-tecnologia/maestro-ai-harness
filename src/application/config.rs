@@ -41,11 +41,11 @@ pub struct AppConfig {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("Erro de IO ao carregar configuracao")]
+    #[error("I/O error while loading config")]
     Io(#[from] std::io::Error),
-    #[error("Falha ao parsear TOML: {0}")]
+    #[error("Failed to parse TOML: {0}")]
     ParseToml(#[from] toml::de::Error),
-    #[error("Configuracao invalida: {0}")]
+    #[error("Invalid config: {0}")]
     Invalid(String),
 }
 
@@ -127,7 +127,7 @@ fn default_config_path() -> Result<PathBuf, ConfigError> {
     }
 
     let home = std::env::var("HOME")
-        .map_err(|_| ConfigError::Invalid("Variavel HOME nao definida".to_string()))?;
+        .map_err(|_| ConfigError::Invalid("HOME environment variable is not set".to_string()))?;
 
     Ok(PathBuf::from(home)
         .join(".config")
@@ -138,7 +138,7 @@ fn default_config_path() -> Result<PathBuf, ConfigError> {
 fn to_validated_config(raw: AppConfigFile) -> Result<AppConfig, ConfigError> {
     if raw.providers.is_empty() {
         return Err(ConfigError::Invalid(
-            "A lista de providers nao pode ser vazia".to_string(),
+            "providers list cannot be empty".to_string(),
         ));
     }
 
@@ -147,12 +147,14 @@ fn to_validated_config(raw: AppConfigFile) -> Result<AppConfig, ConfigError> {
 
     for provider in raw.providers {
         if provider.name.trim().is_empty() {
-            return Err(ConfigError::Invalid("Provider com nome vazio".to_string()));
+            return Err(ConfigError::Invalid(
+                "provider name cannot be empty".to_string(),
+            ));
         }
 
         if !unique_names.insert(provider.name.clone()) {
             return Err(ConfigError::Invalid(format!(
-                "Provider duplicado: {}",
+                "duplicate provider: {}",
                 provider.name
             )));
         }
@@ -160,21 +162,21 @@ fn to_validated_config(raw: AppConfigFile) -> Result<AppConfig, ConfigError> {
         if !(provider.endpoint.starts_with("http://") || provider.endpoint.starts_with("https://"))
         {
             return Err(ConfigError::Invalid(format!(
-                "Endpoint invalido para provider {}",
+                "invalid endpoint for provider {}",
                 provider.name
             )));
         }
 
         if provider.timeout_ms == 0 {
             return Err(ConfigError::Invalid(format!(
-                "timeout_ms deve ser maior que zero para provider {}",
+                "timeout_ms must be greater than zero for provider {}",
                 provider.name
             )));
         }
 
         if provider.models.is_empty() {
             return Err(ConfigError::Invalid(format!(
-                "Provider {} deve ter ao menos um modelo",
+                "provider {} must define at least one model",
                 provider.name
             )));
         }
@@ -199,13 +201,13 @@ fn to_validated_config(raw: AppConfigFile) -> Result<AppConfig, ConfigError> {
 
     if raw.runtime.max_concurrency == 0 {
         return Err(ConfigError::Invalid(
-            "runtime.max_concurrency deve ser maior que zero".to_string(),
+            "runtime.max_concurrency must be greater than zero".to_string(),
         ));
     }
 
     if raw.runtime.rate_limit_per_minute == 0 {
         return Err(ConfigError::Invalid(
-            "runtime.rate_limit_per_minute deve ser maior que zero".to_string(),
+            "runtime.rate_limit_per_minute must be greater than zero".to_string(),
         ));
     }
 
@@ -228,7 +230,7 @@ fn parse_auth_mode(raw: &str) -> Result<AuthMode, ConfigError> {
         "none" => Ok(AuthMode::None),
         "bearer" => Ok(AuthMode::Bearer),
         "browser" => Ok(AuthMode::Browser),
-        _ => Err(ConfigError::Invalid(format!("auth_mode invalido: {raw}"))),
+        _ => Err(ConfigError::Invalid(format!("invalid auth_mode: {raw}"))),
     }
 }
 
@@ -241,7 +243,7 @@ fn resolve_auth_token(
         AuthMode::None => {
             if auth_env_var.is_some() {
                 return Err(ConfigError::Invalid(format!(
-                    "Provider {} com auth_mode none nao deve definir auth_env_var",
+                    "provider {} with auth_mode=none must not define auth_env_var",
                     provider_name
                 )));
             }
@@ -250,7 +252,7 @@ fn resolve_auth_token(
         AuthMode::Browser => {
             if auth_env_var.is_some() {
                 return Err(ConfigError::Invalid(format!(
-                    "Provider {} com auth_mode browser nao deve definir auth_env_var",
+                    "provider {} with auth_mode=browser must not define auth_env_var",
                     provider_name
                 )));
             }
@@ -259,21 +261,21 @@ fn resolve_auth_token(
         AuthMode::Bearer => {
             let var_name = auth_env_var.ok_or_else(|| {
                 ConfigError::Invalid(format!(
-                    "Provider {} com auth_mode bearer exige auth_env_var",
+                    "provider {} with auth_mode=bearer requires auth_env_var",
                     provider_name
                 ))
             })?;
 
             let token = std::env::var(var_name).map_err(|_| {
                 ConfigError::Invalid(format!(
-                    "Variavel de ambiente {} nao definida para provider {}",
+                    "environment variable {} is not set for provider {}",
                     var_name, provider_name
                 ))
             })?;
 
             if token.trim().is_empty() {
                 return Err(ConfigError::Invalid(format!(
-                    "Variavel de ambiente {} esta vazia para provider {}",
+                    "environment variable {} is empty for provider {}",
                     var_name, provider_name
                 )));
             }
@@ -292,7 +294,7 @@ fn validate_runtime_references(
         .find(|p| p.name == runtime.default_provider)
         .ok_or_else(|| {
             ConfigError::Invalid(format!(
-                "runtime.default_provider referencia provider inexistente: {}",
+                "runtime.default_provider references unknown provider: {}",
                 runtime.default_provider
             ))
         })?;
@@ -303,7 +305,7 @@ fn validate_runtime_references(
         .any(|model| model == &runtime.default_model)
     {
         return Err(ConfigError::Invalid(format!(
-            "runtime.default_model {} nao existe no provider {}",
+            "runtime.default_model {} does not exist in provider {}",
             runtime.default_model, runtime.default_provider
         )));
     }

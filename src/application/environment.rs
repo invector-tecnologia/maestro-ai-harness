@@ -7,7 +7,7 @@ use crate::domain::models::message::Message;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum EnvironmentError {
-    #[error("Nao ha assinantes ativos no barramento")]
+    #[error("No active subscribers on the bus")]
     NoSubscribers,
 }
 

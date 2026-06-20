@@ -69,7 +69,7 @@ pub struct RuntimeEventWithTimestamp {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ObserverError {
-    #[error("Observador nao conseguiu processar evento")]
+    #[error("Observer failed to process event")]
     ProcessingFailure,
 }
 

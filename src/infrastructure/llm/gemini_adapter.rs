@@ -24,7 +24,7 @@ pub struct GeminiAdapter {
     client: Client,
     endpoint: String,
     auth_mode: AuthMode,
-    bearer_token: RwLock<Option<String>>, // Usamos RwLock para cachear o token em memória
+    bearer_token: RwLock<Option<String>>, // Use RwLock to cache the token in memory.
 }
 
 impl GeminiAdapter {
@@ -34,7 +34,7 @@ impl GeminiAdapter {
         let timeout = Duration::from_millis(provider.timeout_ms);
         let client = Client::builder().timeout(timeout).build().map_err(|_| {
             ProviderRegistryError::InconsistentConfig(format!(
-                "Nao foi possivel construir cliente HTTP para provider {}",
+                "Failed to build HTTP client for provider {}",
                 provider.name
             ))
         })?;
@@ -48,7 +48,7 @@ impl GeminiAdapter {
     }
 
     async fn get_access_token(&self) -> Result<String, RoleError> {
-        // Fast path: retorna o token se já foi cacheado ou configurado
+        // Fast path: return the token when already cached or configured.
         if let Some(token) = self.bearer_token.read().await.as_ref() {
             return Ok(token.clone());
         }
@@ -56,7 +56,7 @@ impl GeminiAdapter {
         if self.auth_mode == AuthMode::Browser {
             if let Ok(entry) = keyring::Entry::new("maestro_ai", "gemini_refresh_token") {
                 if let Ok(refresh_secret) = entry.get_password() {
-                    info!("Token de refresh seguro encontrado, tentando renovar o access token...");
+                    info!("Secure refresh token found; attempting access token refresh...");
                     if let Ok(access_token) = refresh_access_token(refresh_secret).await {
                         *self.bearer_token.write().await = Some(access_token.clone());
                         return Ok(access_token);
@@ -65,7 +65,7 @@ impl GeminiAdapter {
             }
 
             let token = perform_oauth_flow().await?;
-            // Salva em cache para as próximas chamadas da TUI
+            // Cache for subsequent TUI calls.
             *self.bearer_token.write().await = Some(token.clone());
             return Ok(token);
         }
@@ -73,26 +73,26 @@ impl GeminiAdapter {
         Err(RoleError::LlmError)
     }
 
-    /// Limpa as credenciais cacheadas em memória e no OS Keyring
+    /// Clears cached credentials from memory and OS Keyring.
     pub async fn logout(&self) {
         *self.bearer_token.write().await = None;
         let _ = Self::clear_credentials();
     }
 
-    /// Remove o refresh token do OS Keyring de forma estática (para uso direto pela CLI)
+    /// Removes the refresh token from OS Keyring (for direct CLI use).
     pub fn clear_credentials() -> Result<(), RoleError> {
         if let Ok(entry) = keyring::Entry::new("maestro_ai", "gemini_refresh_token") {
             if entry.delete_credential().is_ok() {
-                info!("Refresh token removido de forma segura do OS Keyring.");
+                info!("Refresh token removed securely from OS Keyring.");
             } else {
-                info!("Nenhum token encontrado no OS Keyring para remover.");
+                info!("No token found in OS Keyring to remove.");
             }
         }
         Ok(())
     }
 }
 
-// Representações da API Google Cloud (Vertex AI) / Gemini
+// Google Cloud (Vertex AI) / Gemini API payload models.
 #[derive(Debug, Serialize)]
 struct GeminiRequest {
     contents: Vec<GeminiContent>,
@@ -145,19 +145,19 @@ impl LlmProvider for GeminiAdapter {
         }
 
         let response = builder.send().await.map_err(|error| {
-            error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "falha de requisicao para provider gemini");
+            error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "request failed for gemini provider");
             RoleError::LlmError
         })?;
 
         let status = response.status();
         if !status.is_success() {
             let err_text = response.text().await.unwrap_or_default();
-            error!(latency_ms = started_at.elapsed().as_millis(), status = %status, "resposta HTTP invalida do provider gemini: {}", err_text);
+            error!(latency_ms = started_at.elapsed().as_millis(), status = %status, "invalid HTTP response from gemini provider: {}", err_text);
             return Err(RoleError::LlmError);
         }
 
         let payload: GeminiResponse = response.json().await.map_err(|error| {
-            error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "payload invalido recebido do provider gemini");
+            error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "invalid payload received from gemini provider");
             RoleError::LlmError
         })?;
 
@@ -168,7 +168,7 @@ impl LlmProvider for GeminiAdapter {
                         if let Some(text) = &part.text {
                             info!(
                                 latency_ms = started_at.elapsed().as_millis(),
-                                "completion gerado com sucesso no provider gemini"
+                                "completion generated successfully by gemini provider"
                             );
                             return Ok(text.trim().to_string());
                         }
@@ -177,14 +177,14 @@ impl LlmProvider for GeminiAdapter {
             }
         }
 
-        error!("resposta sem conteudo do provider gemini");
+        error!("empty response content from gemini provider");
         Err(RoleError::LlmError)
     }
 }
 
 fn create_oauth_client() -> Result<BasicClient, RoleError> {
-    // TODO: Insira seu Client ID do Google Cloud Console (Desktop App)
-    let client_id = ClientId::new("SUA_CLIENT_ID_AQUI.apps.googleusercontent.com".to_string());
+    // TODO: Insert your Google Cloud Console Client ID (Desktop App).
+    let client_id = ClientId::new("YOUR_CLIENT_ID_HERE.apps.googleusercontent.com".to_string());
 
     let auth_url = AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string())
         .map_err(|_| RoleError::LlmError)?;
@@ -205,7 +205,7 @@ async fn refresh_access_token(refresh_secret: String) -> Result<String, RoleErro
         .request_async(async_http_client)
         .await
         .map_err(|error| {
-            error!(%error, "Falha ao renovar o access token com o refresh token existente");
+            error!(%error, "Failed to refresh access token using existing refresh token");
             RoleError::LlmError
         })?;
 
@@ -215,12 +215,12 @@ async fn refresh_access_token(refresh_secret: String) -> Result<String, RoleErro
         }
     }
 
-    info!("Access token renovado com sucesso via Refresh Token.");
+    info!("Access token refreshed successfully via refresh token.");
     Ok(token_result.access_token().secret().clone())
 }
 
 async fn perform_oauth_flow() -> Result<String, RoleError> {
-    info!("Iniciando fluxo OAuth 2.0 no navegador...");
+    info!("Starting OAuth 2.0 browser flow...");
 
     let client = create_oauth_client()?;
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
@@ -230,20 +230,17 @@ async fn perform_oauth_flow() -> Result<String, RoleError> {
         .add_scope(Scope::new(
             "https://www.googleapis.com/auth/cloud-platform".to_string(),
         ))
-        .add_extra_param("access_type", "offline") // Necessário para receber o Refresh Token
-        .add_extra_param("prompt", "consent") // Força o consentimento na primeira vez
+        .add_extra_param("access_type", "offline") // Required to receive a refresh token.
+        .add_extra_param("prompt", "consent") // Forces consent on the first run.
         .set_pkce_challenge(pkce_challenge)
         .url();
 
-    // 1. Abre o navegador do usuário
+    // 1. Open the user's browser.
     if open::that(authorize_url.as_str()).is_err() {
-        println!(
-            "Por favor, abra esta URL no seu navegador:\n{}",
-            authorize_url
-        );
+        println!("Please open this URL in your browser:\n{}", authorize_url);
     }
 
-    // 2. Levanta o servidor localhost temporário para receber o callback
+    // 2. Start temporary localhost server to receive callback.
     let listener = TcpListener::bind("127.0.0.1:8080")
         .await
         .map_err(|_| RoleError::LlmError)?;
@@ -271,10 +268,10 @@ async fn perform_oauth_flow() -> Result<String, RoleError> {
         }
     }
 
-    let html_response = "HTTP/1.1 200 OK\r\n\r\n<html><body><h2>Autenticação no Google Cloud concluída! Você pode voltar para o terminal.</h2></body></html>";
+    let html_response = "HTTP/1.1 200 OK\r\n\r\n<html><body><h2>Google Cloud authentication complete. You can return to the terminal.</h2></body></html>";
     let _ = stream.write_all(html_response.as_bytes()).await;
 
-    // 3. Troca o código por um Access Token e Refresh Token
+    // 3. Exchange the code for access and refresh tokens.
     let token_result = client
         .exchange_code(AuthorizationCode::new(auth_code))
         .set_pkce_verifier(pkce_verifier)
@@ -282,11 +279,11 @@ async fn perform_oauth_flow() -> Result<String, RoleError> {
         .await
         .map_err(|_| RoleError::LlmError)?;
 
-    // Salva o Refresh Token de forma segura
+    // Save refresh token securely.
     if let Some(refresh_token) = token_result.refresh_token() {
         if let Ok(entry) = keyring::Entry::new("maestro_ai", "gemini_refresh_token") {
             let _ = entry.set_password(refresh_token.secret());
-            info!("Refresh token salvo com sucesso de forma segura no OS Keyring.");
+            info!("Refresh token saved securely in OS Keyring.");
         }
     }
 

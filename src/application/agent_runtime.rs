@@ -34,11 +34,11 @@ struct AgentTask {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AgentRuntimeError {
-    #[error("Agente ja registrado: {0}")]
+    #[error("Agent already registered: {0}")]
     AgentAlreadyRunning(String),
-    #[error("Agente nao encontrado: {0}")]
+    #[error("Agent not found: {0}")]
     AgentNotFound(String),
-    #[error("Falha ao finalizar task do agente {0}")]
+    #[error("Failed to join agent task {0}")]
     JoinFailure(String),
 }
 
@@ -282,7 +282,7 @@ async fn process_message_cycle(
 
         let published = environment.publish(outgoing).await;
         if let Err(EnvironmentError::NoSubscribers) = published {
-            debug!(agent = %agent_name, "saida descartada sem assinantes");
+            debug!(agent = %agent_name, "output dropped: no subscribers");
         }
     }
 

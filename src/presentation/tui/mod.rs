@@ -274,7 +274,7 @@ impl TuiApp {
                     }
                     if fs::write(&config_path, DEFAULT_CONFIG_TEMPLATE).is_ok() {
                         self.logs.push(format!(
-                            "readiness action: config template criado em {}",
+                            "readiness action: config template created at {}",
                             config_path.display()
                         ));
                     } else {
@@ -670,14 +670,14 @@ impl TuiApp {
                 self.wizard = Some(CreationWizard::new_skill());
                 Ok(())
             }
-            _ => Err("tipo de wizard invalido: use persona, scope ou skill".to_string()),
+            _ => Err("invalid wizard type: use persona, scope, or skill".to_string()),
         }
     }
 
     fn current_input_title(&self) -> String {
         if let Some(wizard) = &self.wizard {
             format!(
-                "Wizard {} - {} (Enter confirma, q sai)",
+                "Wizard {} - {} (Enter confirms, q exits)",
                 wizard.kind.label(),
                 wizard.current_prompt()
             )
@@ -697,7 +697,7 @@ impl TuiApp {
         match persist_submission(governance, submission) {
             Ok(path) => {
                 self.logs
-                    .push(format!("✅ Arquivo criado: {}", path.display()));
+                    .push(format!("✅ File created: {}", path.display()));
                 let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
                 self.readiness = crate::application::readiness::run_checks(&root);
                 Ok(())
@@ -1838,17 +1838,6 @@ fn extract_scope_slug(file_name: &str) -> String {
     slug(stem)
 }
 
-fn normalize_scope_content_for_governance(content: &str) -> String {
-    content
-        .replace("## Objective", "## Objetivo")
-        .replace("## Scope", "## Escopo de Negocio")
-        .replace("## Business Scope", "## Escopo de Negocio")
-        .replace("## Deliverables", "## Entregaveis")
-        .replace("## Acceptance Criteria", "## Criterios de Aceite")
-        .replace("## Criteria", "## Criterios de Aceite")
-        .replace("## Dependencies", "## Dependencias")
-}
-
 fn next_scope_number(scopes_dir: &PathBuf) -> u16 {
     let mut max_found = 0_u16;
     if let Ok(entries) = fs::read_dir(scopes_dir) {
@@ -1910,11 +1899,7 @@ async fn apply_interview_scope_proposals(
             base_slug
         };
         let file_name = format!("{:03}-{}.md", next_number, fallback);
-        let normalized_content = normalize_scope_content_for_governance(&content);
-        let submission = WizardSubmission::Scope {
-            file_name,
-            content: normalized_content,
-        };
+        let submission = WizardSubmission::Scope { file_name, content };
 
         match persist_submission(governance, submission) {
             Ok(path) => {
@@ -1940,6 +1925,13 @@ async fn apply_interview_scope_proposals(
     if let Some(session_lock) = &app.interview_session {
         let mut session = session_lock.write().await;
         session.approval_pending = false;
+    }
+
+    if applied == 0 {
+        app.logs.push(
+            "⚠️ No interview scope drafts were applied. Review generated drafts and governance requirements."
+                .to_string(),
+        );
     }
 
     Ok(applied)
@@ -2333,11 +2325,11 @@ mod tests {
 
         let steps = [
             "Product",
-            "Definir prioridades",
-            "Backlog priorizado",
-            "Trabalhar com engenharia",
+            "Define priorities",
+            "Prioritized backlog",
+            "Collaborate with engineering",
             "Product -> Engineering",
-            "Nao decidir deploy",
+            "Do not decide deployment",
         ];
 
         let mut last_action = None;
@@ -2364,7 +2356,7 @@ mod tests {
 
         let invalid_scope = WizardSubmission::Scope {
             file_name: "invalid.md".to_string(),
-            content: "## Objective\nA\n## Business Scope\nB\n## Deliverables\nC\n## Acceptance Criteria\nD\n## Dependencies\nE\n".to_string(),
+            content: "## Objective\nA\n".to_string(),
         };
 
         let applied = app.apply_wizard_submission(&governance, invalid_scope);

@@ -27,7 +27,7 @@ impl OllamaAdapter {
     ) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError> {
         let model = provider.models.first().cloned().ok_or_else(|| {
             ProviderRegistryError::InconsistentConfig(format!(
-                "Provider {} sem modelos configurados",
+                "Provider {} has no configured models",
                 provider.name
             ))
         })?;
@@ -35,7 +35,7 @@ impl OllamaAdapter {
         let timeout = Duration::from_millis(provider.timeout_ms);
         let client = Client::builder().timeout(timeout).build().map_err(|_| {
             ProviderRegistryError::InconsistentConfig(format!(
-                "Nao foi possivel construir cliente HTTP para provider {}",
+                "Failed to build HTTP client for provider {}",
                 provider.name
             ))
         })?;
@@ -45,7 +45,7 @@ impl OllamaAdapter {
             AuthMode::Bearer => provider.auth_token.clone(),
             AuthMode::Browser => {
                 return Err(ProviderRegistryError::InconsistentConfig(format!(
-                    "Provider {} nao suporta auth_mode=browser",
+                    "Provider {} does not support auth_mode=browser",
                     provider.name
                 )));
             }
@@ -72,7 +72,7 @@ impl OllamaAdapter {
             .build()
             .map_err(|_| {
                 ProviderRegistryError::InconsistentConfig(
-                    "Nao foi possivel construir cliente HTTP de teste".to_string(),
+                    "Failed to build test HTTP client".to_string(),
                 )
             })?;
 
@@ -127,7 +127,7 @@ impl LlmProvider for OllamaAdapter {
                 info!(
                     original_chars = chars.len(),
                     max_chars = self.max_context_chars,
-                    "aplicando estrategia de eviccao de KV Cache (H2O-style)"
+                    "applying KV cache eviction strategy (H2O-style)"
                 );
                 let top_chars = self.max_context_chars / 4;
                 let bottom_chars = self.max_context_chars - top_chars - 50;
@@ -186,18 +186,18 @@ impl LlmProvider for OllamaAdapter {
         }
 
         let response = builder.send().await.map_err(|error| {
-            error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "falha de requisicao para provider ollama");
+            error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "request failed for ollama provider");
             RoleError::LlmError
         })?;
 
         let status = response.status();
         if !status.is_success() {
-            error!(latency_ms = started_at.elapsed().as_millis(), status = %status, "resposta HTTP invalida do provider ollama");
+            error!(latency_ms = started_at.elapsed().as_millis(), status = %status, "invalid HTTP response from ollama provider");
             return Err(RoleError::LlmError);
         }
 
         let payload: ChatCompletionResponse = response.json().await.map_err(|error| {
-            error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "payload invalido recebido do provider ollama");
+            error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "invalid payload received from ollama provider");
             RoleError::LlmError
         })?;
 
@@ -209,14 +209,14 @@ impl LlmProvider for OllamaAdapter {
             .ok_or_else(|| {
                 error!(
                     latency_ms = started_at.elapsed().as_millis(),
-                    "resposta sem conteudo do provider ollama"
+                    "empty response content from ollama provider"
                 );
                 RoleError::LlmError
             })?;
 
         info!(
             latency_ms = started_at.elapsed().as_millis(),
-            "completion gerado com sucesso no provider ollama"
+            "completion generated successfully by ollama provider"
         );
         Ok(content)
     }

@@ -10,20 +10,20 @@ pub const SKILLS_DIR: &str = "skills";
 
 #[derive(Debug, Error)]
 pub enum MarkdownGovernanceError {
-    #[error("Nome de scope invalido: {0}. Use o padrao 001-Nome da Entrega.md")]
+    #[error("Invalid scope file name: {0}. Use pattern 001-delivery-name.md")]
     InvalidScopeFileName(String),
-    #[error("Numero de scope fora de sequencia. Esperado: {expected:03}, encontrado: {found:03}")]
+    #[error("Scope number out of sequence. Expected: {expected:03}, found: {found:03}")]
     ScopeNumberOutOfSequence { expected: u16, found: u16 },
-    #[error("Documento incompleto para tipo {document_type}: campo obrigatorio ausente: {field}")]
+    #[error("Incomplete {document_type} document: missing required field: {field}")]
     MissingRequiredField {
         document_type: &'static str,
         field: &'static str,
     },
-    #[error("Nome de arquivo invalido para markdown: {0}")]
+    #[error("Invalid markdown file name: {0}")]
     InvalidMarkdownFileName(String),
-    #[error("Nome de persona invalido: {0}")]
+    #[error("Invalid persona name: {0}")]
     InvalidPersonaName(String),
-    #[error("Erro de IO na governanca markdown")]
+    #[error("I/O error in markdown governance")]
     Io(#[from] std::io::Error),
 }
 
@@ -54,18 +54,33 @@ impl MarkdownGovernance {
             "scope",
             content,
             &[
-                &["objetivo"],
-                &["escopo de negocio", "escopo de negócio"],
-                &["entregaveis", "entregáveis"],
-                &["criterios de aceite", "critérios de aceite"],
-                &["dependencias", "dependências"],
+                &["objective", "purpose", "objetivo"],
+                &[
+                    "business scope",
+                    "scope",
+                    "escopo de negocio",
+                    "escopo de negócio",
+                ],
+                &["deliverables", "outputs", "entregaveis", "entregáveis"],
+                &[
+                    "acceptance criteria",
+                    "criteria",
+                    "criterios de aceite",
+                    "critérios de aceite",
+                ],
+                &[
+                    "dependencies",
+                    "dependency map",
+                    "dependencias",
+                    "dependências",
+                ],
             ],
             &[
-                "objetivo",
-                "escopo de negocio",
-                "entregaveis",
-                "criterios de aceite",
-                "dependencias",
+                "objective",
+                "business scope",
+                "deliverables",
+                "acceptance criteria",
+                "dependencies",
             ],
         )?;
 
@@ -82,18 +97,28 @@ impl MarkdownGovernance {
             "persona",
             content,
             &[
-                &["responsabilidade"],
-                &["entregaveis", "entregáveis"],
-                &["instrucoes", "instruções"],
-                &["matriz de interacao", "matriz de interação"],
-                &["limites"],
+                &["responsibility", "responsibilities", "responsabilidade"],
+                &["deliverables", "outputs", "entregaveis", "entregáveis"],
+                &[
+                    "operational instructions",
+                    "instructions",
+                    "instrucoes",
+                    "instruções",
+                ],
+                &[
+                    "interaction matrix",
+                    "collaboration matrix",
+                    "matriz de interacao",
+                    "matriz de interação",
+                ],
+                &["boundaries", "limits", "limites"],
             ],
             &[
-                "responsabilidade",
-                "entregaveis",
-                "instrucoes",
-                "matriz de interacao",
-                "limites",
+                "responsibility",
+                "deliverables",
+                "operational instructions",
+                "interaction matrix",
+                "boundaries",
             ],
         )?;
 
@@ -112,13 +137,13 @@ impl MarkdownGovernance {
             "skill",
             content,
             &[
-                &["objetivo"],
-                &["gatilhos"],
-                &["entradas"],
-                &["saidas", "saídas"],
-                &["restricoes", "restrições"],
+                &["objective", "purpose", "objetivo"],
+                &["triggers", "gatilhos"],
+                &["inputs", "entradas"],
+                &["outputs", "saidas", "saídas"],
+                &["constraints", "restricoes", "restrições"],
             ],
-            &["objetivo", "gatilhos", "entradas", "saidas", "restricoes"],
+            &["objective", "triggers", "inputs", "outputs", "constraints"],
         )?;
 
         Ok(self.skills_dir().join(persona_name).join(skill_file_name))
@@ -255,15 +280,15 @@ mod tests {
     }
 
     fn scope_content() -> &'static str {
-        "## Objetivo\ntexto\n## Escopo de Negocio\ntexto\n## Entregaveis\ntexto\n## Criterios de Aceite\ntexto\n## Dependencias\ntexto"
+        "## Objective\ntext\n## Business Scope\ntext\n## Deliverables\ntext\n## Acceptance Criteria\ntext\n## Dependencies\ntext"
     }
 
     fn persona_content() -> &'static str {
-        "## Responsabilidade\ntexto\n## Entregaveis\ntexto\n## Instrucoes\ntexto\n## Matriz de Interacao\ntexto\n## Limites\ntexto"
+        "## Responsibility\ntext\n## Deliverables\ntext\n## Operational Instructions\ntext\n## Interaction Matrix\ntext\n## Boundaries\ntext"
     }
 
     fn skill_content() -> &'static str {
-        "## Objetivo\ntexto\n## Gatilhos\ntexto\n## Entradas\ntexto\n## Saidas\ntexto\n## Restricoes\ntexto"
+        "## Objective\ntext\n## Triggers\ntext\n## Inputs\ntext\n## Outputs\ntext\n## Constraints\ntext"
     }
 
     #[test]
@@ -331,14 +356,14 @@ mod tests {
         let ensured = governance.ensure_directories();
         assert!(ensured.is_ok());
 
-        let content = "## Objetivo\ntexto";
+        let content = "## Objective\ntext";
         let res = governance.validate_scope_document("001-Base.md", content);
 
         assert!(matches!(
             res,
             Err(MarkdownGovernanceError::MissingRequiredField {
                 document_type: "scope",
-                field: "escopo de negocio"
+                field: "business scope"
             })
         ));
 
@@ -362,7 +387,7 @@ mod tests {
         let root = unique_root();
         let governance = MarkdownGovernance::new(&root);
         let content =
-            "## Responsabilidade\ntexto\n## Entregaveis\ntexto\n## Instrucoes\ntexto\n## Limites\ntexto";
+            "## Responsibility\ntext\n## Deliverables\ntext\n## Operational Instructions\ntext\n## Boundaries\ntext";
 
         let res = governance.validate_persona_document("produto.md", content);
 
@@ -370,7 +395,7 @@ mod tests {
             res,
             Err(MarkdownGovernanceError::MissingRequiredField {
                 document_type: "persona",
-                field: "matriz de interacao"
+                field: "interaction matrix"
             })
         ));
 
@@ -404,16 +429,58 @@ mod tests {
         let res = governance.validate_skill_document(
             "engenharia",
             "code-review.md",
-            "## Objetivo\ntexto",
+            "## Objective\ntext",
         );
 
         assert!(matches!(
             res,
             Err(MarkdownGovernanceError::MissingRequiredField {
                 document_type: "skill",
-                field: "gatilhos"
+                field: "triggers"
             })
         ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn accepts_legacy_portuguese_aliases_for_scope() {
+        let root = unique_root();
+        let governance = MarkdownGovernance::new(&root);
+        let ensured = governance.ensure_directories();
+        assert!(ensured.is_ok());
+
+        let content = "## Objetivo\ntexto\n## Escopo de Negocio\ntexto\n## Entregaveis\ntexto\n## Criterios de Aceite\ntexto\n## Dependencias\ntexto";
+        let res = governance.validate_scope_document("001-Base.md", content);
+
+        assert!(res.is_ok());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn accepts_legacy_portuguese_aliases_for_persona() {
+        let root = unique_root();
+        let governance = MarkdownGovernance::new(&root);
+
+        let content = "## Responsabilidade\ntexto\n## Entregaveis\ntexto\n## Instrucoes\ntexto\n## Matriz de Interacao\ntexto\n## Limites\ntexto";
+        let res = governance.validate_persona_document("produto.md", content);
+
+        assert!(res.is_ok());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn accepts_legacy_portuguese_aliases_for_skill() {
+        let root = unique_root();
+        let governance = MarkdownGovernance::new(&root);
+
+        let content =
+            "## Objetivo\ntexto\n## Gatilhos\ntexto\n## Entradas\ntexto\n## Saidas\ntexto\n## Restricoes\ntexto";
+        let res = governance.validate_skill_document("engenharia", "code-review.md", content);
+
+        assert!(res.is_ok());
 
         let _ = fs::remove_dir_all(root);
     }

@@ -22,15 +22,15 @@ pub struct ResolvedProvider {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProviderRegistryError {
-    #[error("Provider nao encontrado na configuracao: {0}")]
+    #[error("Provider not found in config: {0}")]
     UnknownProvider(String),
-    #[error("Fabrica nao registrada para provider: {0}")]
+    #[error("Factory not registered for provider: {0}")]
     FactoryNotRegistered(String),
-    #[error("Fabrica duplicada para provider: {0}")]
+    #[error("Duplicate factory for provider: {0}")]
     FactoryAlreadyRegistered(String),
-    #[error("Modelo {model} nao existe no provider {provider}")]
+    #[error("Model {model} does not exist in provider {provider}")]
     ModelNotConfigured { provider: String, model: String },
-    #[error("Configuracao inconsistente: {0}")]
+    #[error("Inconsistent config: {0}")]
     InconsistentConfig(String),
 }
 
@@ -85,7 +85,7 @@ impl ProviderRegistry {
             .find(|provider| provider.name == config.runtime.default_provider)
             .ok_or_else(|| {
                 ProviderRegistryError::InconsistentConfig(format!(
-                    "runtime.default_provider inexistente: {}",
+                    "runtime.default_provider not found: {}",
                     config.runtime.default_provider
                 ))
             })?;
@@ -212,14 +212,14 @@ mod tests {
         assert!(registered.is_ok());
 
         let mut config = sample_config();
-        config.runtime.default_model = "inexistente".to_string();
+        config.runtime.default_model = "missing-model".to_string();
 
         let result = registry.resolve_default(&config);
 
         assert!(matches!(
             result,
             Err(ProviderRegistryError::ModelNotConfigured { provider, model })
-                if provider == "ollama" && model == "inexistente"
+                if provider == "ollama" && model == "missing-model"
         ));
     }
 

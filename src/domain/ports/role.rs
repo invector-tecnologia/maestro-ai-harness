@@ -3,9 +3,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum RoleError {
-    #[error("Erro de LLM")]
+    #[error("LLM error")]
     LlmError,
-    #[error("Erro de raciocínio")]
+    #[error("Reasoning error")]
     ReasoningError,
 }
 

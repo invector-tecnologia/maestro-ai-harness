@@ -12,7 +12,7 @@ use crate::domain::ports::role::{Role, RoleError};
 
 #[derive(Debug, Error)]
 pub enum PersonaOperationsError {
-    #[error("Catalogo de personas invalido: {0}")]
+    #[error("Invalid persona catalog: {0}")]
     InvalidPersonaCatalog(#[from] PersonaError),
 }
 
@@ -49,7 +49,7 @@ impl PersonaRuntimeRole {
 
     fn build_prompt(&self, message: &Message) -> String {
         format!(
-            "Persona: {}\nProposito: {}\nResponsabilidades: {}\nMensagem recebida: {}",
+            "Persona: {}\nPurpose: {}\nResponsibilities: {}\nReceived message: {}",
             self.persona.name,
             self.persona.purpose,
             self.persona.responsibilities.join("; "),
@@ -120,7 +120,7 @@ impl Role for PersonaRuntimeRole {
         let generated = state
             .generated_content
             .clone()
-            .unwrap_or_else(|| "Sem analise disponivel".to_string());
+            .unwrap_or_else(|| "No analysis available".to_string());
 
         let interaction = &self.persona.interaction_matrix
             [state.handoff_index % self.persona.interaction_matrix.len()];
@@ -131,7 +131,7 @@ impl Role for PersonaRuntimeRole {
         state.generated_content = None;
 
         let content = format!(
-            "{} | Handoff para {}: {}",
+            "{} | Handoff to {}: {}",
             generated, interaction.target_persona, interaction.expected_handoff
         );
 
@@ -202,7 +202,7 @@ mod tests {
     #[async_trait]
     impl LlmProvider for DummyLlmProvider {
         async fn generate_completion(&self, prompt: &str) -> Result<String, RoleError> {
-            Ok(format!("analise: {}", prompt.lines().next().unwrap_or("")))
+            Ok(format!("analysis: {}", prompt.lines().next().unwrap_or("")))
         }
     }
 
@@ -226,7 +226,7 @@ mod tests {
         let published = environment
             .publish(Message::new(
                 "user".to_string(),
-                "Planejar entrega do incremento".to_string(),
+                "Plan the increment delivery".to_string(),
                 None,
             ))
             .await;
