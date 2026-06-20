@@ -1,0 +1,22 @@
+[
+  {
+    "question": "How should shared async state be managed in this Rust project?",
+    "required_terms": ["tokio", "rwlock", "shared state"]
+  },
+  {
+    "question": "How do vector DB choices impact retrieval latency and filtering?",
+    "required_terms": ["latency", "filter", "vector"]
+  },
+  {
+    "question": "What harness safeguards should run before agent execution?",
+    "required_terms": ["readiness", "validation", "safety"]
+  },
+  {
+    "question": "How can prompt engineering be governed in Maestro?",
+    "required_terms": ["prompt", "template", "governance"]
+  },
+  {
+    "question": "What KV cache strategies reduce decode latency?",
+    "required_terms": ["kv cache", "decode", "latency"]
+  }
+]

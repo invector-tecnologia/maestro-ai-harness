@@ -4,4 +4,5 @@ pub mod environment;
 pub mod markdown_governance;
 pub mod persona;
 pub mod persona_operations;
+pub mod rag;
 pub mod readiness;

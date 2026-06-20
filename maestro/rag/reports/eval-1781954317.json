@@ -1,0 +1,45 @@
+{
+  "cases_total": 5,
+  "baseline_cases_passed": 3,
+  "enhanced_cases_passed": 3,
+  "average_baseline_score": 0.6,
+  "average_enhanced_score": 0.6,
+  "report_path": "/home/bro/projects/maestro-ai-harness/maestro/rag/reports/eval-1781954317.json",
+  "case_results": [
+    {
+      "question": "How should shared async state be managed in this Rust project?",
+      "baseline_score": 0.6666667,
+      "enhanced_score": 0.6666667,
+      "baseline_citations": 5,
+      "enhanced_citations": 5
+    },
+    {
+      "question": "How do vector DB choices impact retrieval latency and filtering?",
+      "baseline_score": 1.0,
+      "enhanced_score": 1.0,
+      "baseline_citations": 5,
+      "enhanced_citations": 5
+    },
+    {
+      "question": "What harness safeguards should run before agent execution?",
+      "baseline_score": 0.0,
+      "enhanced_score": 0.0,
+      "baseline_citations": 4,
+      "enhanced_citations": 5
+    },
+    {
+      "question": "How can prompt engineering be governed in Maestro?",
+      "baseline_score": 0.33333334,
+      "enhanced_score": 0.33333334,
+      "baseline_citations": 5,
+      "enhanced_citations": 5
+    },
+    {
+      "question": "What KV cache strategies reduce decode latency?",
+      "baseline_score": 1.0,
+      "enhanced_score": 1.0,
+      "baseline_citations": 4,
+      "enhanced_citations": 4
+    }
+  ]
+}

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::application::agent_runtime::AgentRuntime;
 use crate::application::config::ConfigLoader;
@@ -12,8 +12,12 @@ use crate::application::environment::Environment;
 use crate::application::markdown_governance::MarkdownGovernance;
 use crate::application::persona::PersonaCatalog;
 use crate::application::persona_operations::registrations_from_default_personas;
+use crate::application::rag::RagService;
+use crate::domain::ports::rag::RagEmbedder;
 use crate::infrastructure::llm::gemini_adapter::GeminiAdapter;
 use crate::infrastructure::llm::provider_registry::ProviderRegistry;
+use crate::infrastructure::rag::local_hybrid_index::LocalHybridIndex;
+use crate::infrastructure::rag::ollama_embedder::OllamaEmbedder;
 use crate::presentation::tui::{run_tui, OnboardingBootstrap};
 
 #[derive(Debug, Parser)]
@@ -56,6 +60,29 @@ pub enum Commands {
         project_name: String,
     },
     Logout,
+    Rag {
+        #[command(subcommand)]
+        command: RagCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RagCommands {
+    Ingest {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long, default_value_t = 900)]
+        chunk_size_chars: usize,
+    },
+    Query {
+        question: String,
+        #[arg(long, default_value_t = 8)]
+        top_k: usize,
+    },
+    Eval {
+        #[arg(long, default_value_t = 8)]
+        top_k: usize,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -70,6 +97,18 @@ pub enum CliOutcome {
     ConfigInitialized,
     ProjectInitialized,
     LogoutCompleted,
+    RagIngested {
+        documents: usize,
+        chunks: usize,
+    },
+    RagQueryCompleted {
+        citations: usize,
+    },
+    RagEvalCompleted {
+        cases_total: usize,
+        baseline_cases_passed: usize,
+        enhanced_cases_passed: usize,
+    },
 }
 
 pub async fn execute(cli: Cli) -> Result<CliOutcome> {
@@ -252,6 +291,114 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             let _ = GeminiAdapter::clear_credentials();
             println!("✅ Logout completed successfully.");
             Ok(CliOutcome::LogoutCompleted)
+        }
+        Commands::Rag { command } => {
+            let root = std::env::current_dir()?;
+            let local_index = Arc::new(LocalHybridIndex::new(&root));
+            let embedder = build_rag_embedder().await;
+            let rag = RagService::new_with_options(
+                local_index.clone(),
+                local_index.clone(),
+                local_index.clone(),
+                embedder,
+                root.join("maestro").join("rag"),
+            );
+
+            match command {
+                RagCommands::Ingest {
+                    root,
+                    chunk_size_chars,
+                } => {
+                    let corpus_root = match root {
+                        Some(path) => path,
+                        None => std::env::current_dir()?,
+                    };
+
+                    let default_paths = vec![
+                        corpus_root.join("docs"),
+                        corpus_root.join("src"),
+                        corpus_root.join("README.md"),
+                        corpus_root.join("maestro").join("config.toml"),
+                    ];
+
+                    let report = rag.ingest_paths(default_paths, chunk_size_chars).await?;
+
+                    info!(
+                        docs = report.documents_indexed,
+                        chunks = report.chunks_indexed,
+                        index = %local_index.index_path().display(),
+                        "RAG ingestion completed"
+                    );
+
+                    Ok(CliOutcome::RagIngested {
+                        documents: report.documents_indexed,
+                        chunks: report.chunks_indexed,
+                    })
+                }
+                RagCommands::Query { question, top_k } => {
+                    let answer = rag.query(&question, top_k).await?;
+
+                    info!(
+                        citations = answer.citations.len(),
+                        response = %answer.answer,
+                        "RAG query completed"
+                    );
+
+                    Ok(CliOutcome::RagQueryCompleted {
+                        citations: answer.citations.len(),
+                    })
+                }
+                RagCommands::Eval { top_k } => {
+                    let report = rag.evaluate(top_k).await?;
+                    info!(
+                        total = report.cases_total,
+                        baseline_passed = report.baseline_cases_passed,
+                        enhanced_passed = report.enhanced_cases_passed,
+                        baseline_avg = report.average_baseline_score,
+                        enhanced_avg = report.average_enhanced_score,
+                        report_path = %report.report_path,
+                        "RAG evaluation completed"
+                    );
+
+                    Ok(CliOutcome::RagEvalCompleted {
+                        cases_total: report.cases_total,
+                        baseline_cases_passed: report.baseline_cases_passed,
+                        enhanced_cases_passed: report.enhanced_cases_passed,
+                    })
+                }
+            }
+        }
+    }
+}
+
+async fn build_rag_embedder() -> Option<Arc<dyn RagEmbedder>> {
+    let config = match ConfigLoader::load(None) {
+        Ok(cfg) => cfg,
+        Err(_) => return None,
+    };
+
+    let provider = match config
+        .providers
+        .iter()
+        .find(|provider| provider.name == config.runtime.default_provider)
+    {
+        Some(value) => value,
+        None => return None,
+    };
+
+    let model = match provider.models.iter().find(|m| *m == &config.runtime.default_model) {
+        Some(value) => value,
+        None => match provider.models.first() {
+            Some(fallback) => fallback,
+            None => return None,
+        },
+    };
+
+    match OllamaEmbedder::new(&provider.endpoint, model, provider.timeout_ms) {
+        Ok(embedder) => Some(Arc::new(embedder)),
+        Err(err) => {
+            warn!(error = %err, "failed to initialize rag embedder; using lexical-only retrieval");
+            None
         }
     }
 }
@@ -442,6 +589,48 @@ default_model = "deepseek-coder-v2"
     fn parses_logout_command() {
         let cli = Cli::parse_from(["maestro", "logout"]);
         assert!(matches!(cli.command, Some(Commands::Logout)));
+    }
+
+    #[test]
+    fn parses_rag_ingest_command() {
+        let cli = Cli::parse_from([
+            "maestro",
+            "rag",
+            "ingest",
+            "--chunk-size-chars",
+            "700",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Rag {
+                command: RagCommands::Ingest {
+                    chunk_size_chars: 700,
+                    ..
+                }
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_rag_query_command() {
+        let cli = Cli::parse_from(["maestro", "rag", "query", "What is KV cache?"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Rag {
+                command: RagCommands::Query { .. }
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_rag_eval_command() {
+        let cli = Cli::parse_from(["maestro", "rag", "eval", "--top-k", "6"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Rag {
+                command: RagCommands::Eval { top_k: 6 }
+            })
+        ));
     }
 
     #[test]
