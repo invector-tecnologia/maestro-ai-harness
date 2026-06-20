@@ -118,17 +118,18 @@ impl TuiApp {
     pub fn show_help(&mut self) {
         self.mode = UIMode::HelpMenu;
         self.logs.clear();
-        self.logs.push("📚 MAESTRO - MANUAL INTERATIVO".to_string());
+        self.logs
+            .push("📚 MAESTRO - INTERACTIVE MANUAL".to_string());
         self.logs.push(String::new());
         self.logs.push("Start (Quick Start):".to_string());
         self.logs
-            .push("  /new persona   - Criar nova persona (IA agent)".to_string());
+            .push("  /new persona   - Create a new persona (AI agent)".to_string());
         self.logs
-            .push("  /new scope     - Criar novo escopo de trabalho".to_string());
+            .push("  /new scope     - Create a new work scope".to_string());
         self.logs
-            .push("  /new skill     - Ensinar nova skill a um agent".to_string());
+            .push("  /new skill     - Teach a new skill to an agent".to_string());
         self.logs.push(String::new());
-        self.logs.push("Consultar Status:".to_string());
+        self.logs.push("Check Status:".to_string());
         self.logs
             .push("  /status        - View agents health".to_string());
         self.logs
@@ -137,23 +138,23 @@ impl TuiApp {
         self.logs
             .push("Edit Configurations (in text editor):".to_string());
         self.logs
-            .push("  maestro/config.toml       - Configurar providers/modelos".to_string());
+            .push("  maestro/config.toml       - Configure providers/models".to_string());
         self.logs
-            .push("  maestro/personas/*.md     - Editar personas livremente".to_string());
+            .push("  maestro/personas/*.md     - Edit personas freely".to_string());
         self.logs
-            .push("  maestro/scopes/*.md       - Editar escopos de trabalho".to_string());
+            .push("  maestro/scopes/*.md       - Edit work scopes".to_string());
         self.logs.push(String::new());
-        self.logs.push("Controles:".to_string());
+        self.logs.push("Controls:".to_string());
         self.logs
-            .push("  Ctrl+L         - Logout de provedores (ex: Google Gemini)".to_string());
+            .push("  Ctrl+L         - Log out of providers (e.g. Google Gemini)".to_string());
         self.logs
             .push("  Ctrl+D         - Toggle debug panel".to_string());
         self.logs
-            .push("  q              - Sair (quando input vazio)".to_string());
-        self.logs.push("  ESC            - Sair".to_string());
+            .push("  q              - Quit (when input is empty)".to_string());
+        self.logs.push("  ESC            - Quit".to_string());
         self.logs.push(String::new());
         self.logs
-            .push("Digite 'back' para retornar ao workspace".to_string());
+            .push("Type 'back' to return to the workspace".to_string());
     }
 
     pub fn return_to_workspace(&mut self) {
@@ -265,45 +266,45 @@ impl TuiApp {
                         ));
                     } else {
                         self.logs
-                            .push("readiness action: falha ao criar config template".to_string());
+                            .push("readiness action: failed to create config template".to_string());
                     }
                 } else {
                     self.logs
-                        .push("readiness action: config ja existe".to_string());
+                        .push("readiness action: config already exists".to_string());
                 }
             }
             ReadinessAction::OpenConfigHint => {
                 self.logs
-                    .push("readiness action: abra maestro/config.toml no editor".to_string());
+                    .push("readiness action: open maestro/config.toml in the editor".to_string());
             }
             ReadinessAction::ConfigureProviders => {
                 self.logs.push(
-                    "readiness action: adicione [[providers]] e runtime.default_provider em maestro/config.toml"
+                    "readiness action: add [[providers]] and runtime.default_provider in maestro/config.toml"
                         .to_string(),
                 );
             }
             ReadinessAction::StartProvider => {
                 self.logs.push(
-                    "readiness action: inicie o provider default (ex: ollama serve)".to_string(),
+                    "readiness action: start the default provider (e.g. ollama serve)".to_string(),
                 );
             }
             ReadinessAction::CreateScope => {
                 self.wizard = Some(CreationWizard::new_scope());
                 self.focus = PanelFocus::Workspace;
                 self.logs
-                    .push("readiness action: wizard de scope iniciado".to_string());
+                    .push("readiness action: scope wizard started".to_string());
             }
             ReadinessAction::CreatePersona => {
                 self.wizard = Some(CreationWizard::new_persona());
                 self.focus = PanelFocus::Workspace;
                 self.logs
-                    .push("readiness action: wizard de persona iniciado".to_string());
+                    .push("readiness action: persona wizard started".to_string());
             }
             ReadinessAction::CreateSkill => {
                 self.wizard = Some(CreationWizard::new_skill());
                 self.focus = PanelFocus::Workspace;
                 self.logs
-                    .push("readiness action: wizard de skill iniciado".to_string());
+                    .push("readiness action: skill wizard started".to_string());
             }
         }
 
@@ -497,7 +498,7 @@ impl TuiApp {
                 KeyCode::Char('y') | KeyCode::Char('Y') if self.approval_modal_visible => {
                     self.approval_modal_visible = false;
                     self.logs
-                        .push("✅ Propostas aprovadas! Aplicando mudanças...".to_string());
+                        .push("✅ Proposals approved! Applying changes...".to_string());
                     // In real implementation, would write files and refresh readiness here
                     self.mode = UIMode::Workspace;
                     return None;
@@ -505,14 +506,14 @@ impl TuiApp {
                 KeyCode::Char('n') | KeyCode::Char('N') if self.approval_modal_visible => {
                     self.approval_modal_visible = false;
                     self.logs
-                        .push("❓ Entendido. Posso fazer outras sugestões?".to_string());
+                        .push("❓ Understood. Can I make other suggestions?".to_string());
                     return None;
                 }
                 KeyCode::Enter => {
                     let answer = self.input.trim().to_string();
                     self.input.clear();
                     if !answer.is_empty() {
-                        self.logs.push(format!("você: {}", answer));
+                        self.logs.push(format!("you: {}", answer));
                         // In real implementation, would process answer with interview_bot
                         // For now, just advance turn count
                     }
@@ -570,7 +571,7 @@ impl TuiApp {
                 } else if command.starts_with("/new") {
                     match self.start_wizard_from_command(&command) {
                         Ok(()) => {
-                            self.logs.push(format!("wizard iniciado: {command}"));
+                            self.logs.push(format!("wizard started: {command}"));
                         }
                         Err(error) => {
                             self.logs.push(format!("wizard: {error}"));
@@ -588,40 +589,41 @@ impl TuiApp {
                     None
                 } else if command == "/check" {
                     let status = if self.readiness.is_ready() {
-                        "✅ PRONTO PARA VOAR! Sistema configurado e personalizavel."
+                        "✅ READY TO GO! System configured and customizable."
                     } else {
-                        "⚠️  Sistema nao esta totalmente pronto.\n\nPasso a passo sugerido:\n"
+                        "⚠️  System is not fully ready.\n\nSuggested steps:\n"
                     };
                     self.logs.push(status.to_string());
 
                     if !self.readiness.has_config {
                         self.logs.push(
-                            "  1. Criar maestro/config.toml (use: maestro init-config)".to_string(),
+                            "  1. Create maestro/config.toml (use: maestro init-config)"
+                                .to_string(),
                         );
                     }
                     if self.readiness.has_config && !self.readiness.has_providers {
                         self.logs.push(
-                            "  2. Definir pelo menos um [[providers]] valido no config.toml"
+                            "  2. Define at least one valid [[providers]] entry in config.toml"
                                 .to_string(),
                         );
                     }
                     if self.readiness.has_providers && !self.readiness.provider_reachable {
                         self.logs.push(
-                            "  3. Subir o provider default (ex: ollama serve) ou ajustar endpoint"
+                            "  3. Start the default provider (e.g. ollama serve) or adjust the endpoint"
                                 .to_string(),
                         );
                     }
                     if !self.readiness.has_scopes {
                         self.logs
-                            .push("  4. Criar um scope: /new scope".to_string());
+                            .push("  4. Create a scope: /new scope".to_string());
                     }
                     if !self.readiness.has_personas {
                         self.logs
-                            .push("  5. Criar uma persona: /new persona".to_string());
+                            .push("  5. Create a persona: /new persona".to_string());
                     }
                     if !self.readiness.has_skills {
                         self.logs
-                            .push("  6. Criar uma skill: /new skill".to_string());
+                            .push("  6. Create a skill: /new skill".to_string());
                     }
                     None
                 } else if command.starts_with("/ask ") {
@@ -677,11 +679,11 @@ impl TuiApp {
                 wizard.current_prompt()
             )
         } else if self.focus == PanelFocus::Readiness {
-            "Readiness focus (Tab alterna, Up/Down seleciona, Enter executa)".to_string()
+            "Readiness focus (Tab switches, Up/Down selects, Enter runs)".to_string()
         } else if self.mode == UIMode::HelpMenu {
-            "Help (escreva 'back' para retornar)".to_string()
+            "Help (type 'back' to return)".to_string()
         } else {
-            "Comando (Enter envia, q sai | /help /check /new persona|scope|skill)".to_string()
+            "Command (Enter sends, q quits | /help /check /new persona|scope|skill)".to_string()
         }
     }
     fn apply_wizard_submission(
@@ -797,7 +799,6 @@ pub async fn run_tui(
             };
             app.update_logs_from_history(&history);
 
-            // Also display runtime events for observability
             let runtime_events = if let Some(rt) = &runtime {
                 rt.events_snapshot().await
             } else {
@@ -880,8 +881,8 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
             .constraints([
                 Constraint::Length(8), // Logo
                 Constraint::Length(6), // Maestro panel
-                Constraint::Min(0),     // Monitor/logs
-                Constraint::Length(5),  // User input
+                Constraint::Min(0),    // Monitor/logs
+                Constraint::Length(5), // User input
             ])
             .split(area);
 
@@ -929,12 +930,12 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         render_debug_panel(frame, top_columns[2], app);
     }
 
-    // Workspace Area: Logo on top, Agentes and Logs side-by-side
+    // Workspace Area: Logo on top, Agents and Logs side-by-side
     let ws_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(8), // Logo
-            Constraint::Min(0),    // Agentes and Logs
+            Constraint::Min(0),    // Agents and Logs
         ])
         .split(workspace_area);
 
@@ -943,7 +944,7 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let ws_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(40), // Agentes
+            Constraint::Percentage(40), // Agents
             Constraint::Percentage(60), // Logs
         ])
         .split(ws_rows[1]);
@@ -952,24 +953,24 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     render_monitor_panel(frame, ws_cols[1], app);
 
     // Bottom Area
-    let agentes_width = ws_cols[0].width;
+    let agents_width = ws_cols[0].width;
 
     let bottom_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(agentes_width), // Agentes Destacados
-            Constraint::Min(0),                // Comando (Largura da tela - Agentes Destacados)
+            Constraint::Length(agents_width), // Highlighted agents
+            Constraint::Min(0),               // Command (screen width - highlighted agents)
         ])
         .split(bottom_area);
 
     render_gauge_panel(frame, bottom_cols[0], app);
 
-    // Comando altura = metade de Agentes Destacados
+    // Command height = half of highlighted agents area
     let command_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(0),   // Espaço vazio no topo
-            Constraint::Percentage(100), // Comando na metade inferior
+            Constraint::Percentage(0),   // Empty top space
+            Constraint::Percentage(100), // Command in the lower half
         ])
         .split(bottom_cols[1]);
 
@@ -1100,11 +1101,10 @@ fn render_debug_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &
 
 fn render_gauge_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, _app: &TuiApp) {
     let block = Block::default()
-        .title("Agentes Destacados")
+        .title("Highlighted Agents")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(218, 165, 32)));
 
-    // Simplistic placeholder for the gauge in the mockup
     let paragraph = Paragraph::new("\n\n        [ Gauge 80% ]\n")
         .style(Style::default().fg(Color::White))
         .block(block);
@@ -1115,7 +1115,7 @@ fn render_gauge_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, _app: 
 fn render_logo_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect) {
     let big_text = BigText::builder()
         .pixel_size(PixelSize::Full)
-        .style(Style::default().fg(Color::Rgb(218, 165, 32))) // Dourado
+        .style(Style::default().fg(Color::Rgb(218, 165, 32)))
         .lines(vec!["MAESTRO".into()])
         .build();
     frame.render_widget(big_text, area);
@@ -1175,10 +1175,10 @@ fn render_agents_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: 
         rows,
         [Constraint::Percentage(50), Constraint::Percentage(50)],
     )
-    .header(Row::new(vec!["Agente", "Status"]).style(Style::default().fg(Color::Rgb(218, 165, 32))))
+    .header(Row::new(vec!["Agent", "Status"]).style(Style::default().fg(Color::Rgb(218, 165, 32))))
     .block(
         Block::default()
-            .title("Agentes")
+            .title("Agents")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Rgb(218, 165, 32))),
     );
@@ -1217,12 +1217,11 @@ fn render_input_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &
 
     frame.render_widget(paragraph, area);
 
-    // Show blinking cursor when input panel is in focus
     let is_focused = app.wizard.is_some() || app.focus == PanelFocus::Workspace;
     if is_focused {
-        let max_x = area.x + area.width.saturating_sub(2); // Leave 1 cell for right border
+        let max_x = area.x + area.width.saturating_sub(2);
         let cursor_x = (area.x + 1 + app.input.chars().count() as u16).min(max_x);
-        let cursor_y = area.y + 1; // 1 cell down for top border
+        let cursor_y = area.y + 1;
 
         frame.set_cursor_position((cursor_x, cursor_y));
     }
@@ -1232,7 +1231,6 @@ fn render_maestro_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app:
     let mut lines = vec![];
 
     if let Some(_session) = &app.interview_session {
-        // In real implementation, would properly access async RwLock
         lines.push("🤖 Maestro Interview".to_string());
         lines.push(format!(
             "  Turn: {}/10",
@@ -1360,27 +1358,27 @@ impl CreationWizard {
             kind: WizardKind::Persona,
             fields: vec![
                 WizardField {
-                    prompt: "nome da persona",
+                    prompt: "persona name",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "responsabilidade",
+                    prompt: "responsibility",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "entregaveis",
+                    prompt: "deliverables",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "instrucoes",
+                    prompt: "instructions",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "matriz de interacao",
+                    prompt: "interaction matrix",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "limites",
+                    prompt: "limits",
                     value: String::new(),
                 },
             ],
@@ -1393,31 +1391,31 @@ impl CreationWizard {
             kind: WizardKind::Scope,
             fields: vec![
                 WizardField {
-                    prompt: "numero da entrega (ex: 001)",
+                    prompt: "delivery number (e.g. 001)",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "nome da entrega",
+                    prompt: "delivery name",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "objetivo",
+                    prompt: "objective",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "escopo de negocio",
+                    prompt: "business scope",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "entregaveis",
+                    prompt: "deliverables",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "criterios de aceite",
+                    prompt: "acceptance criteria",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "dependencias",
+                    prompt: "dependencies",
                     value: String::new(),
                 },
             ],
@@ -1430,31 +1428,31 @@ impl CreationWizard {
             kind: WizardKind::Skill,
             fields: vec![
                 WizardField {
-                    prompt: "persona alvo",
+                    prompt: "target persona",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "nome da skill",
+                    prompt: "skill name",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "objetivo",
+                    prompt: "objective",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "gatilhos",
+                    prompt: "triggers",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "entradas",
+                    prompt: "inputs",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "saidas",
+                    prompt: "outputs",
                     value: String::new(),
                 },
                 WizardField {
-                    prompt: "restricoes",
+                    prompt: "constraints",
                     value: String::new(),
                 },
             ],
@@ -1466,13 +1464,13 @@ impl CreationWizard {
         self.fields
             .get(self.cursor)
             .map(|field| field.prompt)
-            .unwrap_or("concluir")
+            .unwrap_or("finish")
     }
 
     fn advance(&mut self, raw_input: &str) -> WizardAdvance {
         if raw_input.trim().is_empty() {
             return WizardAdvance::ValidationError(format!(
-                "campo obrigatorio: {}",
+                "required field: {}",
                 self.current_prompt()
             ));
         }
@@ -1503,7 +1501,7 @@ impl CreationWizard {
         let persona_name = self.fields[0].value.clone();
         let file_name = format!("{}.md", slug(&persona_name));
         let content = format!(
-            "## Responsabilidade\n{}\n\n## Entregaveis\n{}\n\n## Instrucoes\n{}\n\n## Matriz de Interacao\n{}\n\n## Limites\n{}\n",
+            "## Responsibility\n{}\n\n## Deliverables\n{}\n\n## Instructions\n{}\n\n## Interaction Matrix\n{}\n\n## Limits\n{}\n",
             self.fields[1].value,
             self.fields[2].value,
             self.fields[3].value,
@@ -1517,12 +1515,12 @@ impl CreationWizard {
     fn to_scope_submission(&self) -> Result<WizardSubmission, String> {
         let number = self.fields[0].value.trim();
         if number.len() != 3 || !number.chars().all(|ch| ch.is_ascii_digit()) {
-            return Err("numero da entrega deve ter 3 digitos (ex: 001)".to_string());
+            return Err("delivery number must have 3 digits (e.g. 001)".to_string());
         }
 
         let file_name = format!("{}-{}.md", number, slug(&self.fields[1].value));
         let content = format!(
-            "## Objetivo\n{}\n\n## Escopo de Negocio\n{}\n\n## Entregaveis\n{}\n\n## Criterios de Aceite\n{}\n\n## Dependencias\n{}\n",
+            "## Objective\n{}\n\n## Business Scope\n{}\n\n## Deliverables\n{}\n\n## Acceptance Criteria\n{}\n\n## Dependencies\n{}\n",
             self.fields[2].value,
             self.fields[3].value,
             self.fields[4].value,
@@ -1537,7 +1535,7 @@ impl CreationWizard {
         let persona_name = self.fields[0].value.clone();
         let file_name = format!("{}.md", slug(&self.fields[1].value));
         let content = format!(
-            "## Objetivo\n{}\n\n## Gatilhos\n{}\n\n## Entradas\n{}\n\n## Saidas\n{}\n\n## Restricoes\n{}\n",
+            "## Objective\n{}\n\n## Triggers\n{}\n\n## Inputs\n{}\n\n## Outputs\n{}\n\n## Constraints\n{}\n",
             self.fields[2].value,
             self.fields[3].value,
             self.fields[4].value,
@@ -1748,9 +1746,9 @@ mod tests {
         assert!(drawn.is_ok());
 
         let content = buffer_to_string(&terminal);
-        assert!(content.contains("Agentes"));
+        assert!(content.contains("Agents"));
         assert!(content.contains("Monitor"));
-        assert!(content.contains("Comando"));
+        assert!(content.contains("Command"));
         assert!(content.contains("Readiness"));
         assert!(content.contains("Product"));
         assert!(content.contains("idle"));
@@ -1831,7 +1829,7 @@ mod tests {
         assert!(app
             .logs
             .iter()
-            .any(|line| line.contains("nao esta totalmente pronto")));
+            .any(|line| line.contains("System is not fully ready")));
         assert!(app.logs.iter().any(|line| line.contains("/new persona")));
     }
 
@@ -2000,10 +1998,7 @@ mod tests {
         let blocked = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(blocked.is_none());
         assert!(app.wizard.is_some());
-        assert!(app
-            .logs
-            .iter()
-            .any(|line| line.contains("campo obrigatorio")));
+        assert!(app.logs.iter().any(|line| line.contains("required field")));
     }
 
     #[test]
@@ -2047,7 +2042,7 @@ mod tests {
 
         let invalid_scope = WizardSubmission::Scope {
             file_name: "invalid.md".to_string(),
-            content: "## Objetivo\nA\n## Escopo de Negocio\nB\n## Entregaveis\nC\n## Criterios de Aceite\nD\n## Dependencias\nE\n".to_string(),
+            content: "## Objective\nA\n## Business Scope\nB\n## Deliverables\nC\n## Acceptance Criteria\nD\n## Dependencies\nE\n".to_string(),
         };
 
         let applied = app.apply_wizard_submission(&governance, invalid_scope);
