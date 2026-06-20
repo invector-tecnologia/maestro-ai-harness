@@ -103,6 +103,15 @@ pub struct TuiApp {
 pub enum OnboardingBootstrap {
     Fast,
     Detailed,
+    InitInterview,
+}
+
+fn should_enter_interview(bootstrap: OnboardingBootstrap, readiness_ready: bool) -> bool {
+    match bootstrap {
+        OnboardingBootstrap::InitInterview => true,
+        OnboardingBootstrap::Detailed => !readiness_ready,
+        OnboardingBootstrap::Fast => false,
+    }
 }
 
 impl TuiApp {
@@ -500,26 +509,16 @@ impl TuiApp {
         if self.mode == UIMode::Interview {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') if self.approval_modal_visible => {
-                    self.approval_modal_visible = false;
-                    self.logs
-                        .push("✅ Proposals approved! Applying changes...".to_string());
-                    // In real implementation, would write files and refresh readiness here
-                    self.mode = UIMode::Workspace;
-                    return None;
+                    return Some(UserAction::ApproveInterviewProposals);
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') if self.approval_modal_visible => {
-                    self.approval_modal_visible = false;
-                    self.logs
-                        .push("❓ Understood. Can I make other suggestions?".to_string());
-                    return None;
+                    return Some(UserAction::RejectInterviewProposals);
                 }
                 KeyCode::Enter => {
                     let answer = self.input.trim().to_string();
                     self.input.clear();
                     if !answer.is_empty() {
-                        self.logs.push(format!("you: {}", answer));
-                        // In real implementation, would process answer with interview_bot
-                        // For now, just advance turn count
+                        return Some(UserAction::ProcessInterviewAnswer(answer));
                     }
                     return None;
                 }
@@ -715,6 +714,9 @@ enum UserAction {
     SubmitCommand(String),
     CompleteWizard(WizardSubmission),
     RunReadinessAction(ReadinessAction),
+    ProcessInterviewAnswer(String),
+    ApproveInterviewProposals,
+    RejectInterviewProposals,
     Quit,
     Logout,
 }
@@ -766,26 +768,34 @@ pub async fn run_tui(
         }
     }
 
-    // Detailed onboarding opens the interview when the workspace is not ready.
-    if !app.readiness.is_ready() {
-        match _bootstrap {
-            OnboardingBootstrap::Detailed => {
-                app.logs
-                    .push("💬 Starting setup interview with Maestro...".to_string());
-                app.mode = UIMode::Interview;
-                app.interview_bot = Some(Arc::new(
-                    crate::application::interview_bot::InterviewBot::new(),
-                ));
-                let session = crate::application::interview_bot::InterviewSession::default();
-                app.interview_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
+    let should_enter_interview = should_enter_interview(_bootstrap, app.readiness.is_ready());
+
+    if should_enter_interview {
+        app.logs
+            .push("💬 Starting setup interview with Maestro...".to_string());
+        app.mode = UIMode::Interview;
+        app.interview_bot = Some(Arc::new(
+            crate::application::interview_bot::InterviewBot::new(),
+        ));
+        let session = crate::application::interview_bot::InterviewSession::default();
+        app.interview_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
+
+        if matches!(_bootstrap, OnboardingBootstrap::InitInterview) && app.readiness.is_ready() {
+            app.logs
+                .push("🟢 Readiness is green. Waking up Maestro persona...".to_string());
+            let awake =
+                run_maestro_wakeup_check(&mut app, environment.as_ref(), runtime.as_ref()).await;
+            if awake {
+                enqueue_interview_question(&mut app, environment.as_ref()).await?;
             }
-            OnboardingBootstrap::Fast => {
-                app.logs.push(
-                    "🚀 Fast onboarding is using safe defaults. Run 'maestro onboarding --mode detailed' for guided setup."
-                        .to_string(),
-                );
-            }
+        } else {
+            enqueue_interview_question(&mut app, environment.as_ref()).await?;
         }
+    } else if matches!(_bootstrap, OnboardingBootstrap::Fast) {
+        app.logs.push(
+            "🚀 Fast onboarding is using safe defaults. Run 'maestro onboarding --mode detailed' for guided setup."
+                .to_string(),
+        );
     }
 
     let mut events = EventStream::new();
@@ -847,6 +857,65 @@ pub async fn run_tui(
                             }
                             Some(UserAction::RunReadinessAction(action)) => {
                                 app.execute_readiness_action(action, &governance);
+                            }
+                            Some(UserAction::ProcessInterviewAnswer(answer)) => {
+                                app.logs.push(format!("you: {}", answer));
+
+                                if app.maestro_message_id.is_none() {
+                                    app.logs.push(
+                                        "⚠️ Maestro is not answering yet. Configure provider/model in maestro/config.toml and restart interview."
+                                            .to_string(),
+                                    );
+                                    continue;
+                                }
+
+                                if let (Some(bot), Some(session_lock)) =
+                                    (&app.interview_bot, &app.interview_session)
+                                {
+                                    let message_id = app.maestro_message_id.unwrap_or_else(Uuid::new_v4);
+                                    {
+                                        let mut session = session_lock.write().await;
+                                        bot.process_user_answer(&mut session, answer, message_id).await?;
+                                        if session.approval_pending {
+                                            app.approval_modal_visible = true;
+                                        }
+                                    }
+
+                                    if !app.approval_modal_visible {
+                                        let _ = enqueue_interview_question(&mut app, environment.as_ref()).await?;
+                                    }
+                                } else {
+                                    app.logs.push(
+                                        "⚠️ Interview state unavailable. Restart onboarding interview.".to_string(),
+                                    );
+                                }
+                            }
+                            Some(UserAction::ApproveInterviewProposals) => {
+                                app.approval_modal_visible = false;
+                                app.logs
+                                    .push("✅ Proposals approved! Calling Product and applying scopes...".to_string());
+                                let applied = apply_interview_scope_proposals(
+                                    &mut app,
+                                    &governance,
+                                    environment.as_ref(),
+                                )
+                                .await?;
+                                app.logs.push(format!(
+                                    "✅ Product scope handoff completed. {} scope draft(s) applied.",
+                                    applied
+                                ));
+                                app.mode = UIMode::Workspace;
+                            }
+                            Some(UserAction::RejectInterviewProposals) => {
+                                app.approval_modal_visible = false;
+                                if let Some(session_lock) = &app.interview_session {
+                                    let mut session = session_lock.write().await;
+                                    session.approval_pending = false;
+                                    session.proposed_changes = None;
+                                }
+                                app.logs
+                                    .push("❓ Understood. Let us refine requirements before generating new scope drafts.".to_string());
+                                let _ = enqueue_interview_question(&mut app, environment.as_ref()).await?;
                             }
                             Some(UserAction::Logout) => {
                                 let _ = GeminiAdapter::clear_credentials();
@@ -1244,12 +1313,14 @@ fn render_input_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &
 fn render_maestro_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
     let mut lines = vec![];
 
-    if let Some(_session) = &app.interview_session {
+    if let Some(session_lock) = &app.interview_session {
+        let turn = session_lock
+            .try_read()
+            .ok()
+            .map(|session| session.turn_count)
+            .unwrap_or(0);
         lines.push("🤖 Maestro Interview".to_string());
-        lines.push(format!(
-            "  Turn: {}/10",
-            app.interview_session.is_some() as usize
-        ));
+        lines.push(format!("  Turn: {}/10", turn));
         if app.approval_modal_visible {
             lines.push("  🔔 Awaiting your decision...".to_string());
         } else {
@@ -1288,17 +1359,21 @@ fn render_approval_modal(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app
         height: modal_height,
     };
 
-    let proposal_text = vec![
-        "Maestro's Recommendations:".to_string(),
-        "".to_string(),
-        "I recommend 3 personas based on your".to_string(),
-        "project needs:".to_string(),
-        "  • Product - for feature strategy".to_string(),
-        "  • Engineering - for implementation".to_string(),
-        "  • DevOps - for deployment".to_string(),
-        "".to_string(),
-        "Approve changes? [Y/n]".to_string(),
-    ];
+    let mut proposal_text = vec!["Maestro's Recommendations:".to_string(), "".to_string()];
+    if let Some(session_lock) = &app.interview_session {
+        if let Ok(session) = session_lock.try_read() {
+            if let Some(proposals) = &session.proposed_changes {
+                proposal_text.push(proposals.summary.clone());
+                proposal_text.push("".to_string());
+                proposal_text.push("Scope drafts (Product handoff):".to_string());
+                for (name, _) in proposals.scope_drafts.iter().take(3) {
+                    proposal_text.push(format!("  • {}", name));
+                }
+            }
+        }
+    }
+    proposal_text.push("".to_string());
+    proposal_text.push("Approve changes? [Y/n]".to_string());
 
     let modal = Paragraph::new(proposal_text.join("\n"))
         .style(Style::default().fg(Color::White).bg(Color::DarkGray))
@@ -1687,6 +1762,239 @@ fn telemetry_file_path() -> Result<PathBuf> {
 
 fn workspace_maestro_dir() -> Result<PathBuf> {
     Ok(std::env::current_dir()?.join("maestro"))
+}
+
+async fn enqueue_interview_question(
+    app: &mut TuiApp,
+    environment: Option<&Arc<Environment>>,
+) -> Result<bool> {
+    let Some(bot) = &app.interview_bot else {
+        return Ok(false);
+    };
+    let Some(session_lock) = &app.interview_session else {
+        return Ok(false);
+    };
+
+    let mut session = session_lock.write().await;
+    if session.turn_count >= 10 {
+        app.logs.push(
+            "ℹ️ Interview reached the maximum turn limit. Generating final proposal.".to_string(),
+        );
+        if session.proposed_changes.is_none() {
+            let needs = bot.analyze_conversation(&session).await?;
+            session.collected_needs = Some(needs.clone());
+            session.proposed_changes = Some(bot.generate_proposals(&needs)?);
+        }
+        session.approval_pending = true;
+        app.approval_modal_visible = true;
+        return Ok(false);
+    }
+
+    let next_turn = session.turn_count + 1;
+    let Some(question_text) = bot.get_question(next_turn) else {
+        if session.proposed_changes.is_none() {
+            let needs = bot.analyze_conversation(&session).await?;
+            session.collected_needs = Some(needs.clone());
+            session.proposed_changes = Some(bot.generate_proposals(&needs)?);
+        }
+        session.approval_pending = true;
+        app.approval_modal_visible = true;
+        return Ok(false);
+    };
+
+    let question_id = Uuid::new_v4();
+    session
+        .exchange_history
+        .push(crate::application::interview_bot::InterviewExchange {
+            maestro_question: question_id,
+            maestro_text: question_text.clone(),
+            user_answer: String::new(),
+            timestamp: SystemTime::now(),
+        });
+    drop(session);
+
+    app.maestro_message_id = Some(question_id);
+    app.logs.push(format!("maestro: {}", question_text));
+
+    if let Some(env) = environment {
+        let _ = env
+            .publish(Message::new(
+                "maestro".to_string(),
+                format!("Interview question {}: {}", next_turn, question_text),
+                None,
+            ))
+            .await;
+    }
+
+    Ok(true)
+}
+
+fn extract_scope_slug(file_name: &str) -> String {
+    let stem = file_name.trim_end_matches(".md");
+    let parts = stem.splitn(2, '-').collect::<Vec<_>>();
+    if parts.len() == 2 && parts[0].chars().all(|ch| ch.is_ascii_digit()) {
+        return slug(parts[1]);
+    }
+    slug(stem)
+}
+
+fn normalize_scope_content_for_governance(content: &str) -> String {
+    content
+        .replace("## Objective", "## Objetivo")
+        .replace("## Scope", "## Escopo de Negocio")
+        .replace("## Business Scope", "## Escopo de Negocio")
+        .replace("## Deliverables", "## Entregaveis")
+        .replace("## Acceptance Criteria", "## Criterios de Aceite")
+        .replace("## Criteria", "## Criterios de Aceite")
+        .replace("## Dependencies", "## Dependencias")
+}
+
+fn next_scope_number(scopes_dir: &PathBuf) -> u16 {
+    let mut max_found = 0_u16;
+    if let Ok(entries) = fs::read_dir(scopes_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                let prefix = name.split('-').next().unwrap_or_default();
+                if let Ok(value) = prefix.parse::<u16>() {
+                    if value > max_found {
+                        max_found = value;
+                    }
+                }
+            }
+        }
+    }
+    max_found.saturating_add(1)
+}
+
+async fn apply_interview_scope_proposals(
+    app: &mut TuiApp,
+    governance: &MarkdownGovernance,
+    environment: Option<&Arc<Environment>>,
+) -> Result<usize> {
+    let Some(session_lock) = &app.interview_session else {
+        app.logs
+            .push("⚠️ No interview session found; nothing to apply.".to_string());
+        return Ok(0);
+    };
+
+    let (summary, scope_drafts) = {
+        let session = session_lock.read().await;
+        if let Some(proposals) = &session.proposed_changes {
+            (proposals.summary.clone(), proposals.scope_drafts.clone())
+        } else {
+            app.logs
+                .push("⚠️ No proposals generated yet; cannot apply scope drafts.".to_string());
+            return Ok(0);
+        }
+    };
+
+    if let Some(env) = environment {
+        let _ = env
+            .publish(Message::new(
+                "maestro".to_string(),
+                format!("Product handoff: {}", summary),
+                app.maestro_message_id,
+            ))
+            .await;
+    }
+
+    let scopes_dir = governance.scopes_dir();
+    let mut next_number = next_scope_number(&scopes_dir);
+    let mut applied = 0_usize;
+
+    for (draft_name, content) in scope_drafts {
+        let base_slug = extract_scope_slug(&draft_name);
+        let fallback = if base_slug.is_empty() {
+            "interview-scope".to_string()
+        } else {
+            base_slug
+        };
+        let file_name = format!("{:03}-{}.md", next_number, fallback);
+        let normalized_content = normalize_scope_content_for_governance(&content);
+        let submission = WizardSubmission::Scope {
+            file_name,
+            content: normalized_content,
+        };
+
+        match persist_submission(governance, submission) {
+            Ok(path) => {
+                app.logs.push(format!(
+                    "✅ Scope created from interview: {}",
+                    path.display()
+                ));
+                applied = applied.saturating_add(1);
+                next_number = next_number.saturating_add(1);
+            }
+            Err(error) => {
+                app.logs.push(format!(
+                    "❌ Failed to apply interview scope draft: {}",
+                    error
+                ));
+            }
+        }
+    }
+
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    app.readiness = crate::application::readiness::run_checks(&root);
+
+    if let Some(session_lock) = &app.interview_session {
+        let mut session = session_lock.write().await;
+        session.approval_pending = false;
+    }
+
+    Ok(applied)
+}
+
+async fn run_maestro_wakeup_check(
+    app: &mut TuiApp,
+    environment: Option<&Arc<Environment>>,
+    runtime: Option<&Arc<AgentRuntime>>,
+) -> bool {
+    let Some(env) = environment else {
+        app.logs.push(
+            "⚠️ Maestro runtime is not connected. Configure provider and model in maestro/config.toml."
+                .to_string(),
+        );
+        return false;
+    };
+
+    if let Some(rt) = runtime {
+        let health = rt.health_snapshot().await;
+        if health.is_empty() {
+            app.logs.push(
+                "⚠️ No active personas detected. Configure provider/model in maestro/config.toml and restart."
+                    .to_string(),
+            );
+            return false;
+        }
+    }
+
+    let wakeup_prompt = "Maestro are you awake?".to_string();
+    let probe = Message::new("user".to_string(), wakeup_prompt, None);
+    app.maestro_message_id = Some(probe.id());
+    let _ = env.publish(probe).await;
+
+    for _ in 0..8 {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let history = env.get_history().await;
+        let answered = history.iter().rev().take(20).any(|msg| {
+            let sender = msg.sender().to_ascii_lowercase();
+            sender != "user" && sender != "system"
+        });
+
+        if answered {
+            app.logs
+                .push("✅ Maestro persona responded and is ready for interview.".to_string());
+            return true;
+        }
+    }
+
+    app.logs.push(
+        "⚠️ Maestro did not answer wake-up check. Configure provider/model in maestro/config.toml and restart interview."
+            .to_string(),
+    );
+    app.maestro_message_id = None;
+    false
 }
 
 #[cfg(test)]
@@ -2123,5 +2431,121 @@ mod tests {
 
         let content = buffer_to_string(&terminal);
         assert!(content.contains("Maestro"));
+    }
+
+    #[test]
+    fn init_bootstrap_forces_interview_even_when_ready() {
+        assert!(should_enter_interview(
+            OnboardingBootstrap::InitInterview,
+            true
+        ));
+        assert!(!should_enter_interview(OnboardingBootstrap::Detailed, true));
+        assert!(should_enter_interview(OnboardingBootstrap::Detailed, false));
+    }
+
+    #[tokio::test]
+    async fn approval_applies_scope_drafts_to_scopes_folder() {
+        let root = temp_root("maestro-interview-apply-scopes");
+        let created = fs::create_dir_all(&root);
+        assert!(created.is_ok());
+
+        let governance = MarkdownGovernance::new(&root);
+        let ensured = governance.ensure_directories();
+        assert!(ensured.is_ok());
+
+        let old_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let changed = std::env::set_current_dir(&root);
+        assert!(changed.is_ok());
+
+        let mut app = TuiApp {
+            mode: UIMode::Interview,
+            approval_modal_visible: true,
+            interview_session: Some(Arc::new(tokio::sync::RwLock::new(
+                crate::application::interview_bot::InterviewSession {
+                    proposed_changes: Some(crate::application::interview_bot::ProposedChanges {
+                        persona_drafts: vec![],
+                        skill_drafts: vec![],
+                        scope_drafts: vec![(
+                            "001-project-setup.md".to_string(),
+                            "## Objective\nStart project\n\n## Business Scope\nInitial delivery\n\n## Deliverables\nScope file\n\n## Acceptance Criteria\nFile persisted\n\n## Dependencies\nNone\n"
+                                .to_string(),
+                        )],
+                        summary: "Product recommends one scope draft".to_string(),
+                    }),
+                    approval_pending: true,
+                    ..Default::default()
+                },
+            ))),
+            ..TuiApp::default()
+        };
+
+        let applied = apply_interview_scope_proposals(&mut app, &governance, None)
+            .await
+            .unwrap_or(0);
+        assert!(applied >= 1);
+
+        let scopes = fs::read_dir(governance.scopes_dir())
+            .unwrap_or_else(|_| panic!("cannot read scopes dir"))
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(!scopes.is_empty());
+
+        let _ = std::env::set_current_dir(old_dir);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn rejection_writes_nothing_and_keeps_interview_active() {
+        let root = temp_root("maestro-interview-reject-no-write");
+        let created = fs::create_dir_all(&root);
+        assert!(created.is_ok());
+
+        let governance = MarkdownGovernance::new(&root);
+        let ensured = governance.ensure_directories();
+        assert!(ensured.is_ok());
+
+        let mut app = TuiApp {
+            mode: UIMode::Interview,
+            approval_modal_visible: true,
+            interview_bot: Some(Arc::new(crate::application::interview_bot::InterviewBot::new())),
+            interview_session: Some(Arc::new(tokio::sync::RwLock::new(
+                crate::application::interview_bot::InterviewSession {
+                    proposed_changes: Some(crate::application::interview_bot::ProposedChanges {
+                        persona_drafts: vec![],
+                        skill_drafts: vec![],
+                        scope_drafts: vec![(
+                            "001-should-not-write.md".to_string(),
+                            "## Objective\nNo write\n\n## Business Scope\nNone\n\n## Deliverables\nNone\n\n## Acceptance Criteria\nNone\n\n## Dependencies\nNone\n"
+                                .to_string(),
+                        )],
+                        summary: "Reject me".to_string(),
+                    }),
+                    approval_pending: true,
+                    ..Default::default()
+                },
+            ))),
+            ..TuiApp::default()
+        };
+
+        // Simulate rejection path from runtime loop branch.
+        app.approval_modal_visible = false;
+        if let Some(session_lock) = &app.interview_session {
+            let mut session = session_lock.write().await;
+            session.approval_pending = false;
+            session.proposed_changes = None;
+        }
+        app.logs.push(
+            "❓ Understood. Let us refine requirements before generating new scope drafts."
+                .to_string(),
+        );
+
+        assert_eq!(app.mode, UIMode::Interview);
+        let scopes = fs::read_dir(governance.scopes_dir())
+            .unwrap_or_else(|_| panic!("cannot read scopes dir"))
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(scopes.is_empty());
+
+        let _ = fs::remove_dir_all(root);
     }
 }

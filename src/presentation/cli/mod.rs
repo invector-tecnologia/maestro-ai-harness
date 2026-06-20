@@ -251,7 +251,8 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                 let old_dir = std::env::current_dir()?;
                 std::env::set_current_dir(&root)?;
 
-                let tui_result = run_tui_with_runtime(None, OnboardingBootstrap::Detailed).await;
+                let tui_result =
+                    run_tui_with_runtime(None, OnboardingBootstrap::InitInterview).await;
                 let restore_result = std::env::set_current_dir(&old_dir);
 
                 if let Err(err) = restore_result {

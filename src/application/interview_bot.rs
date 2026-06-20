@@ -111,10 +111,22 @@ impl InterviewBot {
         user_answer: String,
         maestro_question_msg_id: Uuid,
     ) -> Result<()> {
-        if let Some(exchange) = session.exchange_history.last() {
+        let mut answer_attached = false;
+        if let Some(exchange) = session.exchange_history.last_mut() {
+            if exchange.user_answer.is_empty() {
+                exchange.user_answer = user_answer.clone();
+                exchange.timestamp = SystemTime::now();
+                answer_attached = true;
+            }
+        }
+
+        if !answer_attached {
+            let fallback_question = self
+                .get_question(session.turn_count.saturating_add(1))
+                .unwrap_or_else(|| "Interview follow-up question".to_string());
             session.exchange_history.push(InterviewExchange {
                 maestro_question: maestro_question_msg_id,
-                maestro_text: exchange.maestro_text.clone(),
+                maestro_text: fallback_question,
                 user_answer,
                 timestamp: SystemTime::now(),
             });
@@ -123,7 +135,7 @@ impl InterviewBot {
         session.turn_count += 1;
 
         // After 7 turns, trigger analysis
-        if session.turn_count >= 7 {
+        if session.turn_count >= 7 && session.proposed_changes.is_none() {
             let needs = self.analyze_conversation(session).await?;
             session.collected_needs = Some(needs.clone());
 
@@ -137,7 +149,10 @@ impl InterviewBot {
     }
 
     /// Analyze conversation to extract PersonaNeeds (LLM-driven or heuristic)
-    async fn analyze_conversation(&self, session: &InterviewSession) -> Result<PersonaNeeds> {
+    pub(crate) async fn analyze_conversation(
+        &self,
+        session: &InterviewSession,
+    ) -> Result<PersonaNeeds> {
         let mut needs = PersonaNeeds::default();
 
         // Heuristic extraction from exchanges (simplified; in production, call Maestro's LLM)
@@ -226,7 +241,7 @@ impl InterviewBot {
     }
 
     /// Generate markdown drafts for proposed personas, skills, and scopes
-    fn generate_proposals(&self, needs: &PersonaNeeds) -> Result<ProposedChanges> {
+    pub(crate) fn generate_proposals(&self, needs: &PersonaNeeds) -> Result<ProposedChanges> {
         let mut proposals = ProposedChanges {
             persona_drafts: Vec::new(),
             skill_drafts: Vec::new(),
