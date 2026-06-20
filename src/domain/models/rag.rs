@@ -14,15 +14,24 @@ impl KnowledgeDomain {
     pub fn from_text(value: &str) -> Self {
         let lowered = value.to_lowercase();
 
-        if lowered.contains("kv cache") || lowered.contains("kv-cache") || lowered.contains("paged attention") {
+        if lowered.contains("kv cache")
+            || lowered.contains("kv-cache")
+            || lowered.contains("paged attention")
+        {
             return Self::KvCache;
         }
 
-        if lowered.contains("prompt") || lowered.contains("few-shot") || lowered.contains("system prompt") {
+        if lowered.contains("prompt")
+            || lowered.contains("few-shot")
+            || lowered.contains("system prompt")
+        {
             return Self::PromptEngineering;
         }
 
-        if lowered.contains("harness") || lowered.contains("orchestration") || lowered.contains("governance") {
+        if lowered.contains("harness")
+            || lowered.contains("orchestration")
+            || lowered.contains("governance")
+        {
             return Self::Harness;
         }
 
@@ -110,7 +119,9 @@ impl RagQuery {
         if lowered.contains("rust") && !domains.contains(&KnowledgeDomain::Rust) {
             domains.push(KnowledgeDomain::Rust);
         }
-        if (lowered.contains("vector") || lowered.contains("qdrant") || lowered.contains("pgvector"))
+        if (lowered.contains("vector")
+            || lowered.contains("qdrant")
+            || lowered.contains("pgvector"))
             && !domains.contains(&KnowledgeDomain::VectorDb)
         {
             domains.push(KnowledgeDomain::VectorDb);

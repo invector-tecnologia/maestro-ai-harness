@@ -1,3 +1,4 @@
+pub mod agent_observability;
 pub mod agent_runtime;
 pub mod config;
 pub mod environment;

@@ -42,8 +42,8 @@ impl LocalHybridIndex {
             .await
             .map_err(|err| RagError::Io(err.to_string()))?;
 
-        let parsed: Vec<RagChunk> = serde_json::from_str(&raw)
-            .map_err(|err| RagError::Serialization(err.to_string()))?;
+        let parsed: Vec<RagChunk> =
+            serde_json::from_str(&raw).map_err(|err| RagError::Serialization(err.to_string()))?;
         *guard = parsed;
 
         Ok(())
@@ -147,7 +147,8 @@ impl RagReranker for LocalHybridIndex {
         for mut item in candidates {
             let trust = f32::from(item.chunk.metadata.source_trust_score.min(5)) * 0.03;
             let relevance = f32::from(item.chunk.metadata.project_relevance.min(5)) * 0.03;
-            item.rerank_score = (item.lexical_score * 0.5) + (item.vector_score * 0.3) + trust + relevance;
+            item.rerank_score =
+                (item.lexical_score * 0.5) + (item.vector_score * 0.3) + trust + relevance;
             rescored.push(item);
         }
 

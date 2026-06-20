@@ -147,7 +147,9 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                 if let Ok(resolved) = registry.resolve_default(&cfg) {
                     let env = Arc::new(Environment::new(128));
                     let rt = Arc::new(AgentRuntime::new(Arc::clone(&env)));
-                    if let Ok(registrations) = registrations_from_default_personas(resolved.provider) {
+                    if let Ok(registrations) =
+                        registrations_from_default_personas(resolved.provider)
+                    {
                         let _ = rt.start_agents(registrations).await;
                     }
                     (Some(env), Some(rt))
@@ -158,12 +160,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                 (None, None)
             };
 
-            let tui_result = run_tui(
-                environment,
-                runtime.clone(),
-                OnboardingBootstrap::Auto,
-            )
-            .await;
+            let tui_result = run_tui(environment, runtime.clone(), OnboardingBootstrap::Auto).await;
             if let Some(rt) = runtime {
                 let _ = rt.stop_all().await;
             }
@@ -178,7 +175,9 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                 if let Ok(resolved) = registry.resolve_default(&cfg) {
                     let env = Arc::new(Environment::new(128));
                     let rt = Arc::new(AgentRuntime::new(Arc::clone(&env)));
-                    if let Ok(registrations) = registrations_from_default_personas(resolved.provider) {
+                    if let Ok(registrations) =
+                        registrations_from_default_personas(resolved.provider)
+                    {
                         let _ = rt.start_agents(registrations).await;
                     }
                     (Some(env), Some(rt))
@@ -195,8 +194,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                 _ => OnboardingBootstrap::Auto,
             };
 
-            let tui_result =
-                run_tui(environment, runtime.clone(), bootstrap).await;
+            let tui_result = run_tui(environment, runtime.clone(), bootstrap).await;
             if let Some(rt) = runtime {
                 let _ = rt.stop_all().await;
             }
@@ -386,7 +384,11 @@ async fn build_rag_embedder() -> Option<Arc<dyn RagEmbedder>> {
         None => return None,
     };
 
-    let model = match provider.models.iter().find(|m| *m == &config.runtime.default_model) {
+    let model = match provider
+        .models
+        .iter()
+        .find(|m| *m == &config.runtime.default_model)
+    {
         Some(value) => value,
         None => match provider.models.first() {
             Some(fallback) => fallback,
@@ -593,13 +595,7 @@ default_model = "deepseek-coder-v2"
 
     #[test]
     fn parses_rag_ingest_command() {
-        let cli = Cli::parse_from([
-            "maestro",
-            "rag",
-            "ingest",
-            "--chunk-size-chars",
-            "700",
-        ]);
+        let cli = Cli::parse_from(["maestro", "rag", "ingest", "--chunk-size-chars", "700"]);
         assert!(matches!(
             cli.command,
             Some(Commands::Rag {

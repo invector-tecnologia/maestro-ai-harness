@@ -13,7 +13,7 @@ pub struct ReadinessItem {
     pub dummy_guide: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ReadinessState {
     pub items: Vec<ReadinessItem>,
     pub has_config: bool,
@@ -23,21 +23,6 @@ pub struct ReadinessState {
     pub has_scopes: bool,
     pub has_personas: bool,
     pub has_skills: bool,
-}
-
-impl Default for ReadinessState {
-    fn default() -> Self {
-        Self {
-            items: Vec::new(),
-            has_config: false,
-            config_valid: false,
-            has_providers: false,
-            provider_reachable: false,
-            has_scopes: false,
-            has_personas: false,
-            has_skills: false,
-        }
-    }
 }
 
 impl ReadinessState {
@@ -93,7 +78,11 @@ pub fn run_checks(root: &Path) -> ReadinessState {
                 });
 
                 if has_providers {
-                    if let Some(dp) = config.providers.iter().find(|p| p.name == config.runtime.default_provider) {
+                    if let Some(dp) = config
+                        .providers
+                        .iter()
+                        .find(|p| p.name == config.runtime.default_provider)
+                    {
                         provider_reachable = endpoint_is_reachable(&dp.endpoint);
                         items.push(ReadinessItem {
                             name: format!("Provider Reachability ({})", dp.name),
@@ -108,12 +97,15 @@ pub fn run_checks(root: &Path) -> ReadinessState {
                         });
                     }
                 }
-            },
+            }
             Err(e) => {
                 items.push(ReadinessItem {
                     name: "Configuration Content".to_string(),
                     passed: false,
-                    dummy_guide: format!("How-To: Fix the following error in your config.toml: {}", e),
+                    dummy_guide: format!(
+                        "How-To: Fix the following error in your config.toml: {}",
+                        e
+                    ),
                 });
             }
         }
@@ -124,21 +116,25 @@ pub fn run_checks(root: &Path) -> ReadinessState {
     items.push(ReadinessItem {
         name: "Scopes Directory".to_string(),
         passed: has_scopes,
-        dummy_guide: "How-To: Create at least one scope markdown file in 'maestro/scopes/'.".to_string(),
+        dummy_guide: "How-To: Create at least one scope markdown file in 'maestro/scopes/'."
+            .to_string(),
     });
 
     let has_personas = dir_has_markdown(&governance.personas_dir());
     items.push(ReadinessItem {
         name: "Personas Directory".to_string(),
         passed: has_personas,
-        dummy_guide: "How-To: Create at least one persona markdown file in 'maestro/personas/'.".to_string(),
+        dummy_guide: "How-To: Create at least one persona markdown file in 'maestro/personas/'."
+            .to_string(),
     });
 
     let has_skills = skills_has_markdown(&governance.skills_dir());
     items.push(ReadinessItem {
         name: "Skills Directory".to_string(),
         passed: has_skills,
-        dummy_guide: "How-To: Create at least one skill markdown file in 'maestro/skills/<persona>/'.".to_string(),
+        dummy_guide:
+            "How-To: Create at least one skill markdown file in 'maestro/skills/<persona>/'."
+                .to_string(),
     });
 
     ReadinessState {
@@ -163,19 +159,19 @@ pub fn print_readiness_failure() {
     let root = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let state = run_checks(&root);
     let failed: Vec<_> = state.items.iter().filter(|r| !r.passed).collect();
-    
+
     if failed.is_empty() {
         return;
     }
 
     println!("=== Readiness ===");
     println!("Status: Not Passed\n");
-    
+
     println!("Passed:");
     for r in state.items.iter().filter(|r| r.passed) {
         println!("  ✅ {}", r.name);
     }
-    
+
     println!("\nFailed:");
     for f in &failed {
         println!("  ❌ {}", f.name);
@@ -199,11 +195,7 @@ pub fn endpoint_is_reachable(endpoint: &str) -> bool {
         endpoint
     };
 
-    let authority = if let Some(value) = without_scheme.split('/').next() {
-        value
-    } else {
-        ""
-    };
+    let authority = without_scheme.split('/').next().unwrap_or_default();
     if authority.is_empty() {
         return false;
     }
@@ -268,4 +260,47 @@ pub fn skills_has_markdown(skills_dir: &Path) -> bool {
         }
     }
     false
+}
+
+/// Auto-bootstrap configuration if missing.
+/// Creates maestro/config.toml with detected provider endpoints.
+pub fn auto_bootstrap_config(root: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    let maestro_dir = root.join("maestro");
+    std::fs::create_dir_all(&maestro_dir)?;
+
+    let config_path = maestro_dir.join("config.toml");
+    if config_path.exists() {
+        return Ok(false); // Already exists, no bootstrap needed
+    }
+
+    // Try to detect local Ollama
+    let ollama_endpoint = "http://127.0.0.1:11434/v1";
+    let ollama_reachable = endpoint_is_reachable(ollama_endpoint);
+
+    let config_content = if ollama_reachable {
+        format!(
+            r#"[[providers]]
+name = "ollama"
+endpoint = "{}"
+auth_mode = "none"
+timeout_ms = 10000
+models = ["deepseek-coder-v2"]
+max_context_chars = 128000
+
+[runtime]
+retry_max_attempts = 3
+max_concurrency = 4
+rate_limit_per_minute = 120
+default_provider = "ollama"
+default_model = "deepseek-coder-v2"
+"#,
+            ollama_endpoint
+        )
+    } else {
+        // Default config with Ollama placeholder
+        crate::application::config::DEFAULT_CONFIG_TEMPLATE.to_string()
+    };
+
+    std::fs::write(&config_path, config_content)?;
+    Ok(true)
 }

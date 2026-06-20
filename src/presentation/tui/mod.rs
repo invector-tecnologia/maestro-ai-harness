@@ -8,11 +8,11 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use crossterm::cursor::{DisableBlinking, EnableBlinking};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use crossterm::cursor::{DisableBlinking, EnableBlinking};
 use crossterm::ExecutableCommand;
 use futures_util::StreamExt;
 use ratatui::backend::CrosstermBackend;
@@ -98,7 +98,10 @@ pub enum OnboardingBootstrap {
 }
 
 impl TuiApp {
-    pub fn with_readiness(mut self, readiness: crate::application::readiness::ReadinessState) -> Self {
+    pub fn with_readiness(
+        mut self,
+        readiness: crate::application::readiness::ReadinessState,
+    ) -> Self {
         self.readiness = readiness;
         self
     }
@@ -272,8 +275,7 @@ impl TuiApp {
             }
             ReadinessAction::StartProvider => {
                 self.logs.push(
-                    "readiness action: inicie o provider default (ex: ollama serve)"
-                        .to_string(),
+                    "readiness action: inicie o provider default (ex: ollama serve)".to_string(),
                 );
             }
             ReadinessAction::CreateScope => {
@@ -340,6 +342,79 @@ impl TuiApp {
         }
 
         self.logs = lines;
+    }
+
+    /// Update logs from runtime events (for observability).
+    pub fn update_logs_from_runtime_events(
+        &mut self,
+        events: &[crate::application::agent_observability::RuntimeEventWithTimestamp],
+    ) {
+        use crate::application::agent_observability::RuntimeEvent;
+
+        let lines = events
+            .iter()
+            .map(|evt| {
+                let evt_desc = match &evt.event {
+                    RuntimeEvent::AgentObserving {
+                        agent_name,
+                        message_id,
+                    } => format!("📥 {} observing message {}", agent_name, message_id),
+                    RuntimeEvent::AgentThinking {
+                        agent_name,
+                        context,
+                    } => format!("🧠 {} thinking: {}", agent_name, context),
+                    RuntimeEvent::AgentActing {
+                        agent_name,
+                        decision,
+                    } => format!("⚙️ {} acting: {}", agent_name, decision),
+                    RuntimeEvent::AgentActed {
+                        agent_name,
+                        output,
+                        handoff_target,
+                    } => {
+                        let handoff_str = handoff_target
+                            .as_ref()
+                            .map(|h| format!(" → {}", h))
+                            .unwrap_or_default();
+                        format!("✅ {} completed{}: {}", agent_name, handoff_str, output)
+                    }
+                    RuntimeEvent::SkillExecutionStarted {
+                        persona_name,
+                        skill_name,
+                        input,
+                    } => format!(
+                        "🎯 Executing {} skill '{}' with: {}",
+                        persona_name, skill_name, input
+                    ),
+                    RuntimeEvent::SkillExecutionCompleted {
+                        persona_name,
+                        skill_name,
+                        result,
+                        success,
+                    } => {
+                        let status = if *success { "✓" } else { "✗" };
+                        format!(
+                            "{} {} skill '{}' result: {}",
+                            status, persona_name, skill_name, result
+                        )
+                    }
+                    RuntimeEvent::ExecutionError {
+                        agent_name,
+                        error_message,
+                    } => format!("❌ {} error: {}", agent_name, error_message),
+                };
+                evt_desc
+            })
+            .collect::<Vec<_>>();
+
+        // Keep only last 100 lines
+        let keep_lines = if lines.len() > 100 {
+            lines.split_at(lines.len() - 100).1.to_vec()
+        } else {
+            lines
+        };
+
+        self.logs = keep_lines;
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> Option<UserAction> {
@@ -501,6 +576,16 @@ impl TuiApp {
                             .push("  6. Criar uma skill: /new skill".to_string());
                     }
                     None
+                } else if command.starts_with("/ask ") {
+                    // /ask <question> - triggers default persona to respond
+                    let question = command.strip_prefix("/ask ").unwrap_or("").to_string();
+                    if question.is_empty() {
+                        self.logs.push("❌ Usage: /ask <your question>".to_string());
+                        None
+                    } else {
+                        self.logs.push(format!("🎯 Asking: {}", question));
+                        Some(UserAction::SubmitCommand(question))
+                    }
                 } else {
                     Some(UserAction::SubmitCommand(command))
                 }
@@ -586,8 +671,10 @@ pub async fn run_tui(
     _bootstrap: OnboardingBootstrap,
 ) -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = TuiApp::default();
-    app.show_debug = true;
+    let mut app = TuiApp {
+        show_debug: true,
+        ..Default::default()
+    };
     app.logs
         .push("🚀 Welcome to Maestro - Type /help to start".to_string());
     app.logs
@@ -597,12 +684,31 @@ pub async fn run_tui(
     let governance = MarkdownGovernance::new(root);
     let _ = governance.ensure_directories();
     let root_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    // Auto-bootstrap configuration if missing
+    match crate::application::readiness::auto_bootstrap_config(&root_path) {
+        Ok(true) => {
+            app.logs
+                .push("✅ Auto-configured maestro/config.toml (Ollama detected!)".to_string());
+        }
+        Ok(false) => {
+            // Config already exists
+        }
+        Err(e) => {
+            app.logs
+                .push(format!("⚠️ Could not auto-bootstrap config: {}", e));
+        }
+    }
+
     let loading_state = crate::application::readiness::run_checks(&root_path);
     app = app.with_readiness(loading_state);
 
     for check in &app.readiness.items {
         if !check.passed {
-            app.logs.push(format!("⚠️ [Action Required] {}: {}", check.name, check.dummy_guide));
+            app.logs.push(format!(
+                "⚠️ [Action Required] {}: {}",
+                check.name, check.dummy_guide
+            ));
         }
     }
 
@@ -631,12 +737,22 @@ pub async fn run_tui(
             };
             app.update_logs_from_history(&history);
 
+            // Also display runtime events for observability
+            let runtime_events = if let Some(rt) = &runtime {
+                rt.events_snapshot().await
+            } else {
+                Vec::new()
+            };
+            if !runtime_events.is_empty() {
+                app.update_logs_from_runtime_events(&runtime_events);
+            }
+
             terminal.draw(|frame| render(frame, &app))?;
 
             tokio::select! {
                 _ = ticker.tick() => {
                     app.tick_animation();
-                    if app.animation_frame % 20 == 0 {
+                    if app.animation_frame.is_multiple_of(20) {
                         app.refresh_readiness(&governance);
                     }
                 }
@@ -648,6 +764,7 @@ pub async fn run_tui(
                                 let message = Message::new("user".to_string(), command, None);
                                 if let Some(env) = &environment { let _ = env.publish(message).await; }
                             }
+                            #[allow(clippy::collapsible_match)]
                             Some(UserAction::CompleteWizard(submission)) => {
                                 if app.apply_wizard_submission(&governance, submission).is_ok() {
                                     TelemetryStore::record("wizard_completed", None)?;
@@ -695,7 +812,7 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<
 
 pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
-    
+
     // Main vertical split: Top (Workspace + Sidebars) and Bottom (Gauge + Command)
     let main_rows = Layout::default()
         .direction(Direction::Vertical)
@@ -710,7 +827,7 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
 
     // Overall split: Workspace vs Sidebars
     let workspace_pct = if app.show_debug { 55 } else { 75 };
-    let readiness_pct = if app.show_debug { 25 } else { 25 };
+    let readiness_pct = 25;
     let debug_pct = if app.show_debug { 20 } else { 0 };
 
     let mut constraints = vec![
@@ -771,7 +888,7 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let command_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(0), // Espaço vazio no topo
+            Constraint::Percentage(0),   // Espaço vazio no topo
             Constraint::Percentage(100), // Comando na metade inferior
         ])
         .split(bottom_cols[1]);
@@ -782,16 +899,15 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
 fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(12),
-            Constraint::Min(10),
-        ])
+        .constraints([Constraint::Length(12), Constraint::Min(10)])
         .split(area);
 
     let (headline, headline_style) = if app.readiness.is_ready() {
         (
             "Maestro is ready ✅",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         (
@@ -822,7 +938,7 @@ fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ap
     frame.render_widget(paragraph.style(headline_style), chunks[0]);
 
     let mut actions_lines = vec![];
-    
+
     actions_lines.push(format!(
         "Focus: {} (Tab to switch)",
         if app.focus == PanelFocus::Readiness {
@@ -836,12 +952,9 @@ fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ap
     if !app.readiness.is_ready() {
         let actions = app.readiness_actions();
         for (index, action) in actions.iter().enumerate() {
-            let is_selected = app.focus == PanelFocus::Readiness && app.readiness_selected_action == index;
-            let marker = if is_selected {
-                "> [ ]"
-            } else {
-                "  [ ]"
-            };
+            let is_selected =
+                app.focus == PanelFocus::Readiness && app.readiness_selected_action == index;
+            let marker = if is_selected { "> [ ]" } else { "  [ ]" };
             actions_lines.push(format!("{} {}", marker, action.label()));
         }
         if actions.is_empty() {
@@ -910,12 +1023,12 @@ fn render_gauge_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, _app: 
         .title("Agentes Destacados")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(218, 165, 32)));
-    
+
     // Simplistic placeholder for the gauge in the mockup
     let paragraph = Paragraph::new("\n\n        [ Gauge 80% ]\n")
         .style(Style::default().fg(Color::White))
         .block(block);
-        
+
     frame.render_widget(paragraph, area);
 }
 
@@ -1030,7 +1143,7 @@ fn render_input_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &
         let max_x = area.x + area.width.saturating_sub(2); // Leave 1 cell for right border
         let cursor_x = (area.x + 1 + app.input.chars().count() as u16).min(max_x);
         let cursor_y = area.y + 1; // 1 cell down for top border
-        
+
         frame.set_cursor_position((cursor_x, cursor_y));
     }
 }
@@ -1455,7 +1568,8 @@ mod tests {
             logs: vec!["user: iniciar".to_string()],
             input: "planejar sprint".to_string(),
             mode: UIMode::Workspace,
-            readiness: crate::application::readiness::ReadinessState { items: vec![],
+            readiness: crate::application::readiness::ReadinessState {
+                items: vec![],
                 has_config: true,
                 config_valid: true,
                 has_providers: true,
@@ -1518,9 +1632,11 @@ mod tests {
 
     #[test]
     fn help_mode_is_non_blocking_and_can_return() {
-        let mut app = TuiApp::default();
+        let mut app = TuiApp {
+            input: "/help".to_string(),
+            ..Default::default()
+        };
 
-        app.input = "/help".to_string();
         let help_action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(help_action.is_none());
         assert_eq!(app.mode, UIMode::HelpMenu);
@@ -1575,7 +1691,8 @@ mod tests {
     #[test]
     fn readiness_focus_enter_dispatches_selected_action() {
         let mut app = TuiApp {
-            readiness: crate::application::readiness::ReadinessState { items: vec![],
+            readiness: crate::application::readiness::ReadinessState {
+                items: vec![],
                 has_config: true,
                 config_valid: true,
                 has_providers: true,
@@ -1594,14 +1711,17 @@ mod tests {
         let action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(matches!(
             action,
-            Some(UserAction::RunReadinessAction(ReadinessAction::CreatePersona))
+            Some(UserAction::RunReadinessAction(
+                ReadinessAction::CreatePersona
+            ))
         ));
     }
 
     #[test]
     fn readiness_focus_number_shortcuts_execute_actions() {
         let mut app = TuiApp {
-            readiness: crate::application::readiness::ReadinessState { items: vec![],
+            readiness: crate::application::readiness::ReadinessState {
+                items: vec![],
                 has_config: true,
                 config_valid: true,
                 has_providers: true,
@@ -1620,7 +1740,9 @@ mod tests {
         assert_eq!(app.readiness_selected_action, 0);
         assert!(matches!(
             action,
-            Some(UserAction::RunReadinessAction(ReadinessAction::OpenConfigHint))
+            Some(UserAction::RunReadinessAction(
+                ReadinessAction::OpenConfigHint
+            ))
         ));
 
         // '2' should execute the second action (CreatePersona at index 1)
@@ -1629,7 +1751,9 @@ mod tests {
         assert_eq!(app.readiness_selected_action, 1);
         assert!(matches!(
             action2,
-            Some(UserAction::RunReadinessAction(ReadinessAction::CreatePersona))
+            Some(UserAction::RunReadinessAction(
+                ReadinessAction::CreatePersona
+            ))
         ));
     }
 

@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use thiserror::Error;
-use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::sync::{broadcast, oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
+use crate::application::agent_observability::{RuntimeEvent, RuntimeEventWithTimestamp};
 use crate::application::environment::{Environment, EnvironmentError};
 use crate::domain::models::message::Message;
 use crate::domain::ports::role::{Role, RoleError};
@@ -45,14 +46,20 @@ pub struct AgentRuntime {
     environment: Arc<Environment>,
     tasks: Mutex<HashMap<String, AgentTask>>,
     health: Arc<RwLock<HashMap<String, AgentHealth>>>,
+    event_tx: broadcast::Sender<RuntimeEventWithTimestamp>,
+    event_history: Arc<RwLock<Vec<RuntimeEventWithTimestamp>>>,
 }
 
 impl AgentRuntime {
     pub fn new(environment: Arc<Environment>) -> Self {
+        let (event_tx, _) = broadcast::channel(256);
+
         Self {
             environment,
             tasks: Mutex::new(HashMap::new()),
             health: Arc::new(RwLock::new(HashMap::new())),
+            event_tx,
+            event_history: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -85,9 +92,10 @@ impl AgentRuntime {
         let environment = Arc::clone(&self.environment);
         let health = Arc::clone(&self.health);
         let role = Arc::clone(&registration.role);
+        let event_tx = self.event_tx.clone();
 
         let join_handle = tokio::spawn(async move {
-            run_agent_loop(agent_name, role, environment, health, shutdown_rx).await;
+            run_agent_loop(agent_name, role, environment, health, shutdown_rx, event_tx).await;
         });
 
         let mut tasks = self.tasks.lock().await;
@@ -138,6 +146,34 @@ impl AgentRuntime {
     pub async fn health_snapshot(&self) -> HashMap<String, AgentHealth> {
         self.health.read().await.clone()
     }
+
+    /// Subscribe to runtime events for observability.
+    pub fn subscribe_to_events(&self) -> broadcast::Receiver<RuntimeEventWithTimestamp> {
+        self.event_tx.subscribe()
+    }
+
+    /// Emit a runtime event (internal use).
+    #[allow(dead_code)]
+    async fn emit_event(&self, event: RuntimeEvent) {
+        let event_with_ts = RuntimeEventWithTimestamp {
+            event,
+            timestamp: std::time::SystemTime::now(),
+        };
+        let _ = self.event_tx.send(event_with_ts.clone());
+
+        // Store in history
+        let mut history = self.event_history.write().await;
+        history.push(event_with_ts);
+        // Keep only last 100 events
+        if history.len() > 100 {
+            history.remove(0);
+        }
+    }
+
+    /// Get a snapshot of recent runtime events.
+    pub async fn events_snapshot(&self) -> Vec<RuntimeEventWithTimestamp> {
+        self.event_history.read().await.clone()
+    }
 }
 
 async fn run_agent_loop(
@@ -146,6 +182,7 @@ async fn run_agent_loop(
     environment: Arc<Environment>,
     health: Arc<RwLock<HashMap<String, AgentHealth>>>,
     mut shutdown_rx: oneshot::Receiver<()>,
+    event_tx: broadcast::Sender<RuntimeEventWithTimestamp>,
 ) {
     info!(agent = %agent_name, "agente iniciado");
     set_health(&health, &agent_name, AgentHealth::Idle).await;
@@ -168,6 +205,7 @@ async fn run_agent_loop(
                             Arc::clone(&environment),
                             Arc::clone(&health),
                             message,
+                            event_tx.clone(),
                         ).await;
 
                         if processed.is_err() {
@@ -194,16 +232,54 @@ async fn process_message_cycle(
     environment: Arc<Environment>,
     health: Arc<RwLock<HashMap<String, AgentHealth>>>,
     message: Message,
+    event_tx: broadcast::Sender<RuntimeEventWithTimestamp>,
 ) -> Result<(), RoleError> {
     set_health(&health, agent_name, AgentHealth::Observing).await;
+    let observe_event = RuntimeEvent::AgentObserving {
+        agent_name: agent_name.to_string(),
+        message_id: message.id().to_string(),
+    };
+    let _ = event_tx.send(RuntimeEventWithTimestamp {
+        event: observe_event,
+        timestamp: std::time::SystemTime::now(),
+    });
+
     role.observe(std::slice::from_ref(&message)).await?;
 
     set_health(&health, agent_name, AgentHealth::Thinking).await;
+    let think_event = RuntimeEvent::AgentThinking {
+        agent_name: agent_name.to_string(),
+        context: format!("Analyzing: {}", message.content()),
+    };
+    let _ = event_tx.send(RuntimeEventWithTimestamp {
+        event: think_event,
+        timestamp: std::time::SystemTime::now(),
+    });
+
     role.think().await?;
 
     set_health(&health, agent_name, AgentHealth::Acting).await;
+    let acting_event = RuntimeEvent::AgentActing {
+        agent_name: agent_name.to_string(),
+        decision: "Preparing response".to_string(),
+    };
+    let _ = event_tx.send(RuntimeEventWithTimestamp {
+        event: acting_event,
+        timestamp: std::time::SystemTime::now(),
+    });
+
     let maybe_outgoing = role.act().await?;
     if let Some(outgoing) = maybe_outgoing {
+        let acted_event = RuntimeEvent::AgentActed {
+            agent_name: agent_name.to_string(),
+            output: outgoing.content().to_string(),
+            handoff_target: None,
+        };
+        let _ = event_tx.send(RuntimeEventWithTimestamp {
+            event: acted_event,
+            timestamp: std::time::SystemTime::now(),
+        });
+
         let published = environment.publish(outgoing).await;
         if let Err(EnvironmentError::NoSubscribers) = published {
             debug!(agent = %agent_name, "saida descartada sem assinantes");

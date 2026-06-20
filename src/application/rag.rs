@@ -151,7 +151,9 @@ impl RagService {
             return Ok(hit);
         }
 
-        let response = self.query_with_mode(question, top_k, QueryMode::Enhanced).await?;
+        let response = self
+            .query_with_mode(question, top_k, QueryMode::Enhanced)
+            .await?;
         self.answer_cache
             .write()
             .await
@@ -235,7 +237,10 @@ impl RagService {
         query.query_embedding = self.embedding_for_text(question).await;
 
         let expanded_limit = top_k.saturating_mul(4).max(top_k);
-        let candidates = self.retriever.retrieve_hybrid(&query, expanded_limit).await?;
+        let candidates = self
+            .retriever
+            .retrieve_hybrid(&query, expanded_limit)
+            .await?;
 
         let selected = match mode {
             QueryMode::Baseline => candidates.into_iter().take(top_k).collect::<Vec<_>>(),
@@ -282,8 +287,9 @@ impl RagService {
             }
 
             let raw = tokio::fs::read_to_string(path).await?;
-            let parsed: Vec<RagEvalCase> = serde_json::from_str(&raw)
-                .map_err(|err| RagApplicationError::Rag(RagError::Serialization(err.to_string())))?;
+            let parsed: Vec<RagEvalCase> = serde_json::from_str(&raw).map_err(|err| {
+                RagApplicationError::Rag(RagError::Serialization(err.to_string()))
+            })?;
             if !parsed.is_empty() {
                 return Ok(parsed);
             }
@@ -438,7 +444,10 @@ fn infer_subtopic(path: &str) -> String {
 
 fn infer_trust_score(path: &str) -> u8 {
     let lowered = path.to_lowercase();
-    if lowered.contains("manifesto") || lowered.contains("architecture") || lowered.contains("conventions") {
+    if lowered.contains("manifesto")
+        || lowered.contains("architecture")
+        || lowered.contains("conventions")
+    {
         return 5;
     }
     if lowered.contains("readme") {
