@@ -878,15 +878,17 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         let interview_rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
+                Constraint::Length(8), // Logo
                 Constraint::Length(6), // Maestro panel
-                Constraint::Min(0),    // Monitor/logs
-                Constraint::Length(5), // User input
+                Constraint::Min(0),     // Monitor/logs
+                Constraint::Length(5),  // User input
             ])
             .split(area);
 
-        render_maestro_panel(frame, interview_rows[0], app);
-        render_monitor_panel(frame, interview_rows[1], app);
-        render_input_panel(frame, interview_rows[2], app);
+        render_logo_panel(frame, interview_rows[0]);
+        render_maestro_panel(frame, interview_rows[1], app);
+        render_monitor_panel(frame, interview_rows[2], app);
+        render_input_panel(frame, interview_rows[3], app);
         render_approval_modal(frame, area, app);
         return;
     }
