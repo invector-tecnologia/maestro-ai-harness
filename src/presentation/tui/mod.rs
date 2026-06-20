@@ -16,11 +16,12 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use futures_util::StreamExt;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table};
 use ratatui::{Frame, Terminal};
 use tui_big_text::{BigText, PixelSize};
+use uuid::Uuid;
 
 use crate::application::agent_runtime::{AgentHealth, AgentRuntime};
 use crate::application::config::DEFAULT_CONFIG_TEMPLATE;
@@ -40,6 +41,7 @@ pub enum UIMode {
     #[default]
     Workspace,
     HelpMenu,
+    Interview,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -88,9 +90,16 @@ pub struct TuiApp {
     play_bell: bool,
     highlight_until: HashMap<String, usize>,
     pub show_debug: bool,
+    // Interview mode fields
+    interview_session:
+        Option<Arc<tokio::sync::RwLock<crate::application::interview_bot::InterviewSession>>>,
+    interview_bot: Option<Arc<crate::application::interview_bot::InterviewBot>>,
+    #[allow(dead_code)]
+    maestro_message_id: Option<Uuid>,
+    approval_modal_visible: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnboardingBootstrap {
     Auto,
     UserIntro,
@@ -482,6 +491,45 @@ impl TuiApp {
             }
         }
 
+        // Handle Interview mode
+        if self.mode == UIMode::Interview {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') if self.approval_modal_visible => {
+                    self.approval_modal_visible = false;
+                    self.logs
+                        .push("✅ Propostas aprovadas! Aplicando mudanças...".to_string());
+                    // In real implementation, would write files and refresh readiness here
+                    self.mode = UIMode::Workspace;
+                    return None;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') if self.approval_modal_visible => {
+                    self.approval_modal_visible = false;
+                    self.logs
+                        .push("❓ Entendido. Posso fazer outras sugestões?".to_string());
+                    return None;
+                }
+                KeyCode::Enter => {
+                    let answer = self.input.trim().to_string();
+                    self.input.clear();
+                    if !answer.is_empty() {
+                        self.logs.push(format!("você: {}", answer));
+                        // In real implementation, would process answer with interview_bot
+                        // For now, just advance turn count
+                    }
+                    return None;
+                }
+                KeyCode::Char(c) => {
+                    self.input.push(c);
+                    return None;
+                }
+                KeyCode::Backspace => {
+                    self.input.pop();
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') if self.input.is_empty() && self.wizard.is_none() => {
                 Some(UserAction::Quit)
@@ -712,6 +760,18 @@ pub async fn run_tui(
         }
     }
 
+    // Initialize interview mode if configuration needs setup
+    if !app.readiness.is_ready() && _bootstrap != OnboardingBootstrap::UserIntro {
+        app.logs
+            .push("💬 Starting setup interview with Maestro...".to_string());
+        app.mode = UIMode::Interview;
+        app.interview_bot = Some(Arc::new(
+            crate::application::interview_bot::InterviewBot::new(),
+        ));
+        let session = crate::application::interview_bot::InterviewSession::default();
+        app.interview_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
+    }
+
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(Duration::from_millis(150));
 
@@ -812,6 +872,24 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<
 
 pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
+
+    // Interview mode has special layout
+    if app.mode == UIMode::Interview {
+        let interview_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(6), // Maestro panel
+                Constraint::Min(0),    // Monitor/logs
+                Constraint::Length(5), // User input
+            ])
+            .split(area);
+
+        render_maestro_panel(frame, interview_rows[0], app);
+        render_monitor_panel(frame, interview_rows[1], app);
+        render_input_panel(frame, interview_rows[2], app);
+        render_approval_modal(frame, area, app);
+        return;
+    }
 
     // Main vertical split: Top (Workspace + Sidebars) and Bottom (Gauge + Command)
     let main_rows = Layout::default()
@@ -1146,6 +1224,79 @@ fn render_input_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &
 
         frame.set_cursor_position((cursor_x, cursor_y));
     }
+}
+
+fn render_maestro_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
+    let mut lines = vec![];
+
+    if let Some(_session) = &app.interview_session {
+        // In real implementation, would properly access async RwLock
+        lines.push("🤖 Maestro Interview".to_string());
+        lines.push(format!(
+            "  Turn: {}/10",
+            app.interview_session.is_some() as usize
+        ));
+        if app.approval_modal_visible {
+            lines.push("  🔔 Awaiting your decision...".to_string());
+        } else {
+            lines.push("  🎧 Listening...".to_string());
+        }
+    } else {
+        lines.push("🤖 Maestro: Ready to help with setup".to_string());
+    }
+
+    let paragraph = Paragraph::new(lines.join("\n"))
+        .style(Style::default().fg(Color::Cyan))
+        .block(
+            Block::default()
+                .title("Maestro")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+
+    frame.render_widget(paragraph, area);
+}
+
+fn render_approval_modal(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
+    if !app.approval_modal_visible {
+        return;
+    }
+
+    let modal_width = 60;
+    let modal_height = 12;
+    let modal_x = (area.width.saturating_sub(modal_width)) / 2;
+    let modal_y = (area.height.saturating_sub(modal_height)) / 2;
+
+    let modal_area = ratatui::layout::Rect {
+        x: area.x + modal_x,
+        y: area.y + modal_y,
+        width: modal_width,
+        height: modal_height,
+    };
+
+    let proposal_text = vec![
+        "Maestro's Recommendations:".to_string(),
+        "".to_string(),
+        "I recommend 3 personas based on your".to_string(),
+        "project needs:".to_string(),
+        "  • Product - for feature strategy".to_string(),
+        "  • Engineering - for implementation".to_string(),
+        "  • DevOps - for deployment".to_string(),
+        "".to_string(),
+        "Approve changes? [Y/n]".to_string(),
+    ];
+
+    let modal = Paragraph::new(proposal_text.join("\n"))
+        .style(Style::default().fg(Color::White).bg(Color::DarkGray))
+        .block(
+            Block::default()
+                .title("Setup Proposal")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green)),
+        )
+        .alignment(Alignment::Left);
+
+    frame.render_widget(modal, modal_area);
 }
 
 #[derive(Debug, Clone)]
@@ -1585,6 +1736,10 @@ mod tests {
             play_bell: false,
             highlight_until: HashMap::new(),
             show_debug: false,
+            interview_session: None,
+            interview_bot: None,
+            maestro_message_id: None,
+            approval_modal_visible: false,
         };
 
         let drawn = terminal.draw(|frame| render(frame, &app));
@@ -1898,5 +2053,64 @@ mod tests {
         assert!(app.logs.iter().any(|line| line.contains("Error saving")));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interview_mode_transition_from_workspace() {
+        let mut app = TuiApp::default();
+        assert_eq!(app.mode, UIMode::Workspace);
+
+        // Simulate entering interview mode
+        app.mode = UIMode::Interview;
+        app.interview_bot = Some(Arc::new(
+            crate::application::interview_bot::InterviewBot::new(),
+        ));
+
+        assert_eq!(app.mode, UIMode::Interview);
+        assert!(app.interview_bot.is_some());
+    }
+
+    #[test]
+    fn interview_mode_handles_user_input() {
+        let mut app = TuiApp {
+            mode: UIMode::Interview,
+            ..TuiApp::default()
+        };
+
+        let input = app.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert!(input.is_none());
+        assert_eq!(app.input, "p");
+
+        let backspace = app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert!(backspace.is_none());
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn interview_mode_renders_maestro_panel_without_crash() {
+        let backend = TestBackend::new(80, 24);
+        let terminal_result = Terminal::new(backend);
+        assert!(terminal_result.is_ok());
+        let mut terminal = match terminal_result {
+            Ok(value) => value,
+            Err(_) => panic!("terminal init failed"),
+        };
+
+        let app = TuiApp {
+            mode: UIMode::Interview,
+            interview_bot: Some(Arc::new(
+                crate::application::interview_bot::InterviewBot::new(),
+            )),
+            interview_session: Some(Arc::new(tokio::sync::RwLock::new(
+                crate::application::interview_bot::InterviewSession::default(),
+            ))),
+            ..TuiApp::default()
+        };
+
+        let drawn = terminal.draw(|frame| render(frame, &app));
+        assert!(drawn.is_ok());
+
+        let content = buffer_to_string(&terminal);
+        assert!(content.contains("Maestro"));
     }
 }

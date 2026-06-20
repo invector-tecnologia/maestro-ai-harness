@@ -2,6 +2,7 @@ pub mod agent_observability;
 pub mod agent_runtime;
 pub mod config;
 pub mod environment;
+pub mod interview_bot;
 pub mod markdown_governance;
 pub mod persona;
 pub mod persona_operations;

@@ -24,10 +24,18 @@ struct PersonaRoleState {
     handoff_index: usize,
 }
 
-struct PersonaRuntimeRole {
+pub struct PersonaRuntimeRole {
     persona: Persona,
     llm_provider: Arc<dyn LlmProvider>,
     state: Arc<Mutex<PersonaRoleState>>,
+}
+
+impl std::fmt::Debug for PersonaRuntimeRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersonaRuntimeRole")
+            .field("persona", &self.persona)
+            .finish()
+    }
 }
 
 impl PersonaRuntimeRole {
