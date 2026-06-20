@@ -1457,12 +1457,12 @@ mod tests {
             mode: UIMode::Workspace,
             readiness: crate::application::readiness::ReadinessState { items: vec![],
                 has_config: true,
+                config_valid: true,
                 has_providers: true,
                 provider_reachable: true,
                 has_scopes: true,
                 has_personas: true,
                 has_skills: true,
-                is_ready: true,
             },
             focus: PanelFocus::Workspace,
             readiness_selected_action: 0,
@@ -1534,14 +1534,19 @@ mod tests {
     #[test]
     fn check_command_reports_readiness_gaps() {
         let mut app = TuiApp {
-            readiness: crate::application::readiness::ReadinessState { items: vec![],
+            readiness: crate::application::readiness::ReadinessState {
+                items: vec![crate::application::readiness::ReadinessItem {
+                    name: "Personas Directory".to_string(),
+                    passed: false,
+                    dummy_guide: "How-To: Create at least one persona markdown file.".to_string(),
+                }],
                 has_config: true,
+                config_valid: true,
                 has_providers: true,
                 provider_reachable: true,
                 has_scopes: true,
                 has_personas: false,
                 has_skills: false,
-                is_ready: false,
             },
             ..TuiApp::default()
         };
@@ -1572,12 +1577,12 @@ mod tests {
         let mut app = TuiApp {
             readiness: crate::application::readiness::ReadinessState { items: vec![],
                 has_config: true,
+                config_valid: true,
                 has_providers: true,
                 provider_reachable: true,
                 has_scopes: true,
                 has_personas: false,
                 has_skills: true,
-                is_ready: false,
             },
             focus: PanelFocus::Readiness,
             ..TuiApp::default()
@@ -1598,12 +1603,12 @@ mod tests {
         let mut app = TuiApp {
             readiness: crate::application::readiness::ReadinessState { items: vec![],
                 has_config: true,
+                config_valid: true,
                 has_providers: true,
                 provider_reachable: true,
                 has_scopes: true,
                 has_personas: false,
                 has_skills: true,
-                is_ready: false,
             },
             focus: PanelFocus::Readiness,
             ..TuiApp::default()
@@ -1640,7 +1645,7 @@ mod tests {
 
         let readiness = crate::application::readiness::run_checks(&root);
         assert!(!readiness.has_config);
-        assert!(!readiness.is_ready);
+        assert!(!readiness.is_ready());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1695,7 +1700,7 @@ mod tests {
         assert!(readiness.has_scopes);
         assert!(readiness.has_personas);
         assert!(readiness.has_skills);
-        assert!(readiness.is_ready);
+        assert!(readiness.is_ready());
 
         let _ = fs::remove_dir_all(root);
     }
