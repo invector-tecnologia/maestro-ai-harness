@@ -5,7 +5,12 @@ Set up a new Maestro project using the guided Ratatui flow.
 
 ## How To Start Directly
 ```bash
-maestro onboarding --mode project --config ~/.config/maestro/config.toml
+maestro onboarding --mode detailed --config ~/.config/maestro/config.toml
+```
+
+For a quicker path with safe defaults:
+```bash
+maestro onboarding --mode fast --config ~/.config/maestro/config.toml
 ```
 
 ## Guided Flow
@@ -15,6 +20,8 @@ maestro onboarding --mode project --config ~/.config/maestro/config.toml
 4. Skill wizard (step 3/3).
 5. Completion screen with project ready for use.
 6. Automatic return to normal TUI mode (agent panel).
+
+Fast mode skips the guided interview and uses defaults when the workspace is already close to ready.
 
 ## Validations
 - Required fields block progress.

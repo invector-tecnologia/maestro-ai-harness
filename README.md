@@ -114,7 +114,8 @@ The recommended workflow to start your workday and orchestrate activities is the
 * **`maestro init-config`:** Generates only the default config file (`maestro/config.toml`) in the current directory.
 * **`maestro scaffold-markdown`:** Generates only the initial Markdown folders and files in the current directory.
 * **`maestro list-agents`:** Displays the list of all personas registered in your current catalog.
-* **`maestro onboarding --mode project`:** Starts a step-by-step guide to configure a new project from scratch.
+* **`maestro onboarding --mode fast`:** Starts onboarding with safe defaults and the shortest path to a working setup.
+* **`maestro onboarding --mode detailed`:** Starts the guided interview with more controls and setup questions.
 
 ### 🐞 Debug Mode
 

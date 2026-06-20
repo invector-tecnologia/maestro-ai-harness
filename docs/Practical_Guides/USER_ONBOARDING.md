@@ -9,7 +9,12 @@ This flow introduces Maestro to first-time users and explains the essential comm
 
 ## How To Start
 ```bash
-maestro onboarding --mode user --config ~/.config/maestro/config.toml
+maestro onboarding --mode detailed --config ~/.config/maestro/config.toml
+```
+
+To start faster with safe defaults:
+```bash
+maestro onboarding --mode fast --config ~/.config/maestro/config.toml
 ```
 
 You can also start in normal mode and let Maestro resume saved onboarding state:
@@ -18,11 +23,12 @@ maestro tui --config ~/.config/maestro/config.toml
 ```
 
 ## Flow
-1. Welcome screen with a feature overview.
-2. `continue` advances onboarding steps.
-3. `skip` redirects immediately to project onboarding.
-4. Onboarding state is saved locally for future sessions.
-5. After project onboarding is completed, Maestro returns automatically to standard TUI mode.
+1. Fast mode starts with safe defaults and minimal prompts.
+2. Detailed mode opens the guided interview and captures more setup decisions.
+3. `continue` advances onboarding steps.
+4. `skip` redirects immediately to project onboarding.
+5. Onboarding state is saved locally for future sessions.
+6. After project onboarding is completed, Maestro returns automatically to standard TUI mode.
 
 ## Useful TUI Commands
 - `/help`

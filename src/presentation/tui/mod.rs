@@ -122,6 +122,11 @@ impl TuiApp {
         self.logs.push(String::new());
         self.logs.push("Start (Quick Start):".to_string());
         self.logs
+            .push("  maestro onboarding --mode fast      - Start with safe defaults".to_string());
+        self.logs.push(
+            "  maestro onboarding --mode detailed  - Start the guided setup interview".to_string(),
+        );
+        self.logs
             .push("  /new persona   - Create a new persona (AI agent)".to_string());
         self.logs
             .push("  /new scope     - Create a new work scope".to_string());

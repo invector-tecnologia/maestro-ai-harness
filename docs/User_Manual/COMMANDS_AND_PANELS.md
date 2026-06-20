@@ -3,7 +3,9 @@
 ## CLI Commands
 - `maestro run [--config <path>] [--duration-ms <n>]`: Runs the multi-agent cycle for a bounded duration.
 - `maestro tui [--config <path>]`: Opens the interactive TUI.
-- `maestro onboarding [--config <path>] [--mode user|project]`: Starts onboarding directly.
+- `maestro onboarding [--config <path>] [--mode fast|detailed]`: Starts onboarding directly.
+- `maestro onboarding --mode fast`: Starts with safe defaults for quicker setup.
+- `maestro onboarding --mode detailed`: Starts the guided interview for full control.
 - `maestro validate-config [--config <path>]`: Validates runtime configuration.
 - `maestro list-agents`: Lists registered default personas.
 - `maestro doctor [--config <path>]`: Checks environment, config, and governance structure.
