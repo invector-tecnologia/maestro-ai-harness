@@ -205,7 +205,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             let root = std::env::current_dir()?;
             let maestro_dir = root.join("maestro");
             fs::create_dir_all(&maestro_dir)?;
-            let config_file = maestro_dir.join("config.toml");
+            let config_file = maestro_dir.join("config.yaml");
             if !config_file.exists() {
                 fs::write(
                     &config_file,
@@ -227,7 +227,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
 
             let maestro_dir = root.join("maestro");
             fs::create_dir_all(&maestro_dir)?;
-            let config_file = maestro_dir.join("config.toml");
+            let config_file = maestro_dir.join("config.yaml");
             if !config_file.exists() {
                 fs::write(
                     &config_file,
@@ -299,7 +299,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                         corpus_root.join("docs"),
                         corpus_root.join("src"),
                         corpus_root.join("README.md"),
-                        corpus_root.join("maestro").join("config.toml"),
+                        corpus_root.join("maestro").join("config.yaml"),
                     ];
 
                     let report = rag.ingest_paths(default_paths, chunk_size_chars).await?;
@@ -387,11 +387,7 @@ async fn build_rag_embedder() -> Option<Arc<dyn RagEmbedder>> {
         Err(_) => return None,
     };
 
-    let provider = match config
-        .providers
-        .iter()
-        .find(|provider| provider.name == config.runtime.default_provider)
-    {
+    let provider = match config.providers.get(&config.system.default_provider) {
         Some(value) => value,
         None => return None,
     };
@@ -399,11 +395,11 @@ async fn build_rag_embedder() -> Option<Arc<dyn RagEmbedder>> {
     let model = match provider
         .models
         .iter()
-        .find(|m| *m == &config.runtime.default_model)
+        .find(|m| m.name == config.system.default_model)
     {
-        Some(value) => value,
+        Some(value) => &value.name,
         None => match provider.models.first() {
-            Some(fallback) => fallback,
+            Some(fallback) => &fallback.name,
             None => return None,
         },
     };
@@ -468,21 +464,7 @@ mod tests {
     }
 
     fn write_valid_config(path: &PathBuf) {
-        let content = r#"
-[[providers]]
-name = "ollama"
-endpoint = "http://127.0.0.1:11434/v1"
-auth_mode = "none"
-timeout_ms = 5000
-models = ["deepseek-coder-v2"]
-
-[runtime]
-retry_max_attempts = 3
-max_concurrency = 4
-rate_limit_per_minute = 120
-default_provider = "ollama"
-default_model = "deepseek-coder-v2"
-"#;
+        let content = "system:\n  default_provider: \"ollama\"\n  default_model: \"mistral\"\n  max_concurrency: 4\n  rate_limit_per_minute: 120\n  retry_max_attempts: 3\nproviders:\n  ollama:\n    kind: \"ollama\"\n    endpoint: \"http://127.0.0.1:11434\"\n    auth_mode: \"none\"\n    timeout_ms: 5000\n    models:\n      - name: \"mistral\"\n        context_window: 32000\n    capabilities:\n      supports_tools: false\n      supports_streaming: true\n      supports_json_mode: false\n      supports_reasoning_controls: false\n      max_context_tokens: 32000\n";
 
         let write = fs::write(path, content);
         assert!(write.is_ok());

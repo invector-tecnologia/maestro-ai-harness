@@ -16,7 +16,9 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 
 use crate::application::config::{AuthMode, ProviderConfig};
-use crate::domain::ports::llm_provider::LlmProvider;
+use crate::domain::ports::llm_provider::{
+    LlmProvider, LlmRequest, LlmResponse, ProviderCapabilities,
+};
 use crate::domain::ports::role::RoleError;
 use crate::infrastructure::llm::provider_registry::ProviderRegistryError;
 
@@ -33,17 +35,21 @@ impl GeminiAdapter {
     ) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError> {
         let timeout = Duration::from_millis(provider.timeout_ms);
         let client = Client::builder().timeout(timeout).build().map_err(|_| {
-            ProviderRegistryError::InconsistentConfig(format!(
-                "Failed to build HTTP client for provider {}",
-                provider.name
-            ))
+            ProviderRegistryError::InconsistentConfig(
+                "Failed to build HTTP client for gemini provider".to_string(),
+            )
         })?;
+
+        let initial_token = provider
+            .auth_env_var
+            .as_ref()
+            .and_then(|var| std::env::var(var).ok());
 
         Ok(Arc::new(Self {
             client,
             endpoint: provider.endpoint.clone(),
             auth_mode: provider.auth_mode.clone(),
-            bearer_token: RwLock::new(provider.auth_token.clone()),
+            bearer_token: RwLock::new(initial_token),
         }))
     }
 
@@ -125,7 +131,35 @@ struct GeminiResponsePart {
 
 #[async_trait]
 impl LlmProvider for GeminiAdapter {
-    async fn generate_completion(&self, prompt: &str) -> Result<String, RoleError> {
+    async fn chat(&self, request: LlmRequest) -> Result<LlmResponse, RoleError> {
+        let prompt = request
+            .messages
+            .first()
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+
+        let text = self.complete_text(&prompt).await?;
+        Ok(LlmResponse {
+            text: Some(text),
+            tool_calls: vec![],
+            finish_reason: "stop".to_string(),
+            usage: None,
+        })
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            supports_tools: true,
+            supports_streaming: true,
+            supports_json_mode: false,
+            supports_reasoning_controls: false,
+            max_context_tokens: 1000000,
+        }
+    }
+}
+
+impl GeminiAdapter {
+    async fn complete_text(&self, prompt: &str) -> Result<String, RoleError> {
         let started_at = std::time::Instant::now();
 
         let token = self.get_access_token().await?;

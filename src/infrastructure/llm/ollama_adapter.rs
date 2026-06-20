@@ -9,7 +9,9 @@ use tokio::io::AsyncWriteExt;
 use tracing::{error, info};
 
 use crate::application::config::{AuthMode, ProviderConfig};
-use crate::domain::ports::llm_provider::LlmProvider;
+use crate::domain::ports::llm_provider::{
+    LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities,
+};
 use crate::domain::ports::role::RoleError;
 use crate::infrastructure::llm::provider_registry::ProviderRegistryError;
 
@@ -25,38 +27,48 @@ impl OllamaAdapter {
     pub fn from_provider_config(
         provider: &ProviderConfig,
     ) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError> {
-        let model = provider.models.first().cloned().ok_or_else(|| {
-            ProviderRegistryError::InconsistentConfig(format!(
-                "Provider {} has no configured models",
-                provider.name
-            ))
-        })?;
+        let model = provider
+            .models
+            .first()
+            .map(|m| m.name.clone())
+            .ok_or_else(|| {
+                ProviderRegistryError::InconsistentConfig(
+                    "Ollama provider has no configured models".to_string(),
+                )
+            })?;
 
         let timeout = Duration::from_millis(provider.timeout_ms);
         let client = Client::builder().timeout(timeout).build().map_err(|_| {
-            ProviderRegistryError::InconsistentConfig(format!(
-                "Failed to build HTTP client for provider {}",
-                provider.name
-            ))
+            ProviderRegistryError::InconsistentConfig(
+                "Failed to build HTTP client for ollama provider".to_string(),
+            )
         })?;
 
         let bearer_token = match provider.auth_mode {
             AuthMode::None => None,
-            AuthMode::Bearer => provider.auth_token.clone(),
+            AuthMode::Bearer => provider
+                .auth_env_var
+                .as_ref()
+                .and_then(|var| std::env::var(var).ok()),
             AuthMode::Browser => {
-                return Err(ProviderRegistryError::InconsistentConfig(format!(
-                    "Provider {} does not support auth_mode=browser",
-                    provider.name
-                )));
+                return Err(ProviderRegistryError::InconsistentConfig(
+                    "Ollama provider does not support auth_mode=browser".to_string(),
+                ));
             }
         };
+
+        let max_context_chars = provider
+            .models
+            .first()
+            .map(|m| m.context_window)
+            .unwrap_or(32000);
 
         Ok(Arc::new(Self {
             client,
             endpoint: normalize_endpoint(&provider.endpoint),
             model,
             bearer_token,
-            max_context_chars: provider.max_context_chars,
+            max_context_chars,
         }))
     }
 
@@ -115,7 +127,37 @@ struct AssistantMessage {
 
 #[async_trait]
 impl LlmProvider for OllamaAdapter {
-    async fn generate_completion(&self, prompt: &str) -> Result<String, RoleError> {
+    async fn chat(&self, request: LlmRequest) -> Result<LlmResponse, RoleError> {
+        // Build the prompt from the first user message for KV cache processing
+        let prompt = request
+            .messages
+            .iter()
+            .find(|m| matches!(m.role, MessageRole::User))
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+
+        let completion = self.generate_text(&prompt).await?;
+        Ok(LlmResponse {
+            text: Some(completion),
+            tool_calls: vec![],
+            finish_reason: "stop".to_string(),
+            usage: None,
+        })
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            supports_tools: false,
+            supports_streaming: true,
+            supports_json_mode: false,
+            supports_reasoning_controls: false,
+            max_context_tokens: self.max_context_chars,
+        }
+    }
+}
+
+impl OllamaAdapter {
+    async fn generate_text(&self, prompt: &str) -> Result<String, RoleError> {
         let started_at = std::time::Instant::now();
 
         // KV CACHE OPTIMIZATION: Orchestrator-level H2O-inspired Eviction Strategy

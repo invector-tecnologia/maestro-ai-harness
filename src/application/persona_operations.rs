@@ -96,7 +96,7 @@ impl Role for PersonaRuntimeRole {
         };
 
         let prompt = self.build_prompt(&message);
-        let generated = self.llm_provider.generate_completion(&prompt).await?;
+        let generated = self.llm_provider.text_only(&prompt).await?;
 
         let mut state = self.state.lock().await;
         if state.should_respond {
@@ -201,8 +201,25 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for DummyLlmProvider {
-        async fn generate_completion(&self, prompt: &str) -> Result<String, RoleError> {
-            Ok(format!("analysis: {}", prompt.lines().next().unwrap_or("")))
+        async fn chat(
+            &self,
+            request: crate::domain::ports::llm_provider::LlmRequest,
+        ) -> Result<crate::domain::ports::llm_provider::LlmResponse, RoleError> {
+            let prompt = request
+                .messages
+                .first()
+                .map(|m| m.content.as_str())
+                .unwrap_or("");
+            Ok(crate::domain::ports::llm_provider::LlmResponse {
+                text: Some(format!("analysis: {}", prompt.lines().next().unwrap_or(""))),
+                tool_calls: vec![],
+                finish_reason: "stop".to_string(),
+                usage: None,
+            })
+        }
+
+        fn capabilities(&self) -> crate::domain::ports::llm_provider::ProviderCapabilities {
+            crate::domain::ports::llm_provider::ProviderCapabilities::default()
         }
     }
 

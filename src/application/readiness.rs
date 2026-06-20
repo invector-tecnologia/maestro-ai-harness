@@ -48,12 +48,12 @@ pub fn run_checks(root: &Path) -> ReadinessState {
         dummy_guide: "How-To: Ensure your PATH environment variable is exported correctly in your shell profile (~/.bashrc or ~/.zshrc).".to_string(),
     });
 
-    let config_path = root.join("maestro").join("config.toml");
+    let config_path = root.join("maestro").join("config.yaml");
     let has_config = config_path.exists();
     items.push(ReadinessItem {
         name: "Maestro configuration file".to_string(),
         passed: has_config,
-        dummy_guide: "How-To: Create a 'maestro/config.toml' file by running 'maestro init-config' or setting it up manually.".to_string(),
+        dummy_guide: "How-To: Create a 'maestro/config.yaml' file by running 'maestro init-config' or setting it up manually.".to_string(),
     });
 
     let mut config_valid = false;
@@ -74,18 +74,15 @@ pub fn run_checks(root: &Path) -> ReadinessState {
                 items.push(ReadinessItem {
                     name: "Providers Configuration".to_string(),
                     passed: has_providers,
-                    dummy_guide: "How-To: Define at least one provider in 'maestro/config.toml' under [[providers]].".to_string(),
+                    dummy_guide: "How-To: Define at least one provider in 'maestro/config.yaml' under providers:.".to_string(),
                 });
 
                 if has_providers {
-                    if let Some(dp) = config
-                        .providers
-                        .iter()
-                        .find(|p| p.name == config.runtime.default_provider)
-                    {
+                    let default_name = &config.system.default_provider;
+                    if let Some(dp) = config.providers.get(default_name) {
                         provider_reachable = endpoint_is_reachable(&dp.endpoint);
                         items.push(ReadinessItem {
-                            name: format!("Provider Reachability ({})", dp.name),
+                            name: format!("Provider Reachability ({})", default_name),
                             passed: provider_reachable,
                             dummy_guide: format!("How-To: Ensure the provider at '{}' is online and accessible. (e.g. 'ollama serve' or check network).", dp.endpoint),
                         });
@@ -93,7 +90,7 @@ pub fn run_checks(root: &Path) -> ReadinessState {
                         items.push(ReadinessItem {
                             name: "Provider Reachability".to_string(),
                             passed: false,
-                            dummy_guide: "How-To: Ensure 'runtime.default_provider' matches a defined provider in config.toml.".to_string(),
+                            dummy_guide: "How-To: Ensure 'system.default_provider' matches a defined provider in config.yaml.".to_string(),
                         });
                     }
                 }

@@ -267,7 +267,7 @@ impl TuiApp {
         match action {
             ReadinessAction::CreateConfigTemplate => {
                 let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let config_path = root.join("maestro").join("config.toml");
+                let config_path = root.join("maestro").join("config.yaml");
                 if !config_path.exists() {
                     if let Some(parent) = config_path.parent() {
                         let _ = fs::create_dir_all(parent);
@@ -288,11 +288,11 @@ impl TuiApp {
             }
             ReadinessAction::OpenConfigHint => {
                 self.logs
-                    .push("readiness action: open maestro/config.toml in the editor".to_string());
+                    .push("readiness action: open maestro/config.yaml in the editor".to_string());
             }
             ReadinessAction::ConfigureProviders => {
                 self.logs.push(
-                    "readiness action: add [[providers]] and runtime.default_provider in maestro/config.toml"
+                    "readiness action: add providers: and system.default_provider in maestro/config.yaml"
                         .to_string(),
                 );
             }
@@ -2265,9 +2265,9 @@ mod tests {
         }
         assert!(port > 0);
 
-        let config_path = root.join("maestro").join("config.toml");
+        let config_path = root.join("maestro").join("config.yaml");
         let config_content = format!(
-            "[[providers]]\nname = \"ollama\"\nendpoint = \"http://127.0.0.1:{port}/v1\"\nauth_mode = \"none\"\ntimeout_ms = 5000\nmodels = [\"deepseek-coder-v2\"]\nmax_context_chars = 128000\n\n[runtime]\nretry_max_attempts = 3\nmax_concurrency = 4\nrate_limit_per_minute = 120\ndefault_provider = \"ollama\"\ndefault_model = \"deepseek-coder-v2\"\n"
+            "system:\n  default_provider: \"ollama\"\n  default_model: \"mistral\"\n  max_concurrency: 4\n  rate_limit_per_minute: 120\n  retry_max_attempts: 3\nproviders:\n  ollama:\n    kind: \"ollama\"\n    endpoint: \"http://127.0.0.1:{port}\"\n    auth_mode: \"none\"\n    timeout_ms: 5000\n    models:\n      - name: \"mistral\"\n        context_window: 32000\n    capabilities:\n      supports_tools: false\n      supports_streaming: true\n      supports_json_mode: false\n      supports_reasoning_controls: false\n      max_context_tokens: 32000\n"
         );
         let write_config = fs::write(&config_path, config_content);
         assert!(write_config.is_ok());

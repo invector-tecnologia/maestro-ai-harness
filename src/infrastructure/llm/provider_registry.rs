@@ -5,8 +5,10 @@ use thiserror::Error;
 
 use crate::application::config::{AppConfig, ProviderConfig};
 use crate::domain::ports::llm_provider::LlmProvider;
+use crate::infrastructure::llm::anthropic_adapter::AnthropicAdapter;
 use crate::infrastructure::llm::gemini_adapter::GeminiAdapter;
 use crate::infrastructure::llm::ollama_adapter::OllamaAdapter;
+use crate::infrastructure::llm::openai_adapter::OpenAiAdapter;
 
 type ProviderFactory = fn(&ProviderConfig) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError>;
 
@@ -24,9 +26,9 @@ pub struct ResolvedProvider {
 pub enum ProviderRegistryError {
     #[error("Provider not found in config: {0}")]
     UnknownProvider(String),
-    #[error("Factory not registered for provider: {0}")]
+    #[error("Factory not registered for kind: {0}")]
     FactoryNotRegistered(String),
-    #[error("Duplicate factory for provider: {0}")]
+    #[error("Duplicate factory for kind: {0}")]
     FactoryAlreadyRegistered(String),
     #[error("Model {model} does not exist in provider {provider}")]
     ModelNotConfigured { provider: String, model: String },
@@ -41,26 +43,30 @@ impl ProviderRegistry {
         }
     }
 
+    /// Register a factory for a provider kind (e.g., "openai", "anthropic", "ollama", "gemini")
     pub fn register(
         &mut self,
-        provider_name: &str,
+        kind: &str,
         factory: ProviderFactory,
     ) -> Result<(), ProviderRegistryError> {
-        if self.factories.contains_key(provider_name) {
+        if self.factories.contains_key(kind) {
             return Err(ProviderRegistryError::FactoryAlreadyRegistered(
-                provider_name.to_string(),
+                kind.to_string(),
             ));
         }
 
-        self.factories.insert(provider_name.to_string(), factory);
+        self.factories.insert(kind.to_string(), factory);
         Ok(())
     }
 
     pub fn register_builtin_providers(&mut self) -> Result<(), ProviderRegistryError> {
+        self.register("openai", OpenAiAdapter::from_provider_config)?;
+        self.register("anthropic", AnthropicAdapter::from_provider_config)?;
         self.register("ollama", OllamaAdapter::from_provider_config)?;
         self.register("gemini", GeminiAdapter::from_provider_config)
     }
 
+    /// Resolve a provider by name from config (routes to factory by kind field)
     pub fn build(
         &self,
         provider_name: &str,
@@ -68,54 +74,64 @@ impl ProviderRegistry {
     ) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError> {
         let provider_cfg = config
             .providers
-            .iter()
-            .find(|provider| provider.name == provider_name)
+            .get(provider_name)
             .ok_or_else(|| ProviderRegistryError::UnknownProvider(provider_name.to_string()))?;
 
         self.build_from_provider_config(provider_cfg)
     }
 
+    /// Resolve default provider from config
     pub fn resolve_default(
         &self,
         config: &AppConfig,
     ) -> Result<ResolvedProvider, ProviderRegistryError> {
-        let provider_cfg = config
-            .providers
-            .iter()
-            .find(|provider| provider.name == config.runtime.default_provider)
-            .ok_or_else(|| {
-                ProviderRegistryError::InconsistentConfig(format!(
-                    "runtime.default_provider not found: {}",
-                    config.runtime.default_provider
-                ))
-            })?;
+        let default_name = &config.system.default_provider;
+        let default_model = &config.system.default_model;
 
-        if !provider_cfg
-            .models
-            .iter()
-            .any(|model| model == &config.runtime.default_model)
-        {
+        let provider_cfg = config.providers.get(default_name).ok_or_else(|| {
+            ProviderRegistryError::InconsistentConfig(format!(
+                "system.default_provider not found: {}",
+                default_name
+            ))
+        })?;
+
+        if !provider_cfg.models.iter().any(|m| &m.name == default_model) {
             return Err(ProviderRegistryError::ModelNotConfigured {
-                provider: provider_cfg.name.clone(),
-                model: config.runtime.default_model.clone(),
+                provider: default_name.clone(),
+                model: default_model.clone(),
             });
         }
 
         let provider = self.build_from_provider_config(provider_cfg)?;
 
         Ok(ResolvedProvider {
-            provider_name: provider_cfg.name.clone(),
-            model: config.runtime.default_model.clone(),
+            provider_name: default_name.clone(),
+            model: default_model.clone(),
             provider,
         })
+    }
+
+    /// Build all providers from config
+    pub fn build_all(
+        &self,
+        config: &AppConfig,
+    ) -> Result<HashMap<String, Arc<dyn LlmProvider>>, ProviderRegistryError> {
+        let mut providers = HashMap::new();
+
+        for (name, provider_cfg) in &config.providers {
+            let provider = self.build_from_provider_config(provider_cfg)?;
+            providers.insert(name.clone(), provider);
+        }
+
+        Ok(providers)
     }
 
     fn build_from_provider_config(
         &self,
         provider_cfg: &ProviderConfig,
     ) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError> {
-        let factory = self.factories.get(&provider_cfg.name).ok_or_else(|| {
-            ProviderRegistryError::FactoryNotRegistered(provider_cfg.name.clone())
+        let factory = self.factories.get(&provider_cfg.kind).ok_or_else(|| {
+            ProviderRegistryError::FactoryNotRegistered(provider_cfg.kind.clone())
         })?;
 
         factory(provider_cfg)
@@ -132,16 +148,32 @@ impl Default for ProviderRegistry {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use std::collections::HashMap;
 
-    use crate::application::config::{AuthMode, RuntimePolicy};
+    use crate::application::config::{AuthMode, ModelSpec, ProviderConfig, SystemPolicy};
+    use crate::domain::ports::llm_provider::{LlmRequest, LlmResponse, ProviderCapabilities};
     use crate::domain::ports::role::RoleError;
 
     struct DummyProvider;
 
     #[async_trait]
     impl LlmProvider for DummyProvider {
-        async fn generate_completion(&self, prompt: &str) -> Result<String, RoleError> {
-            Ok(format!("dummy:{prompt}"))
+        async fn chat(&self, request: LlmRequest) -> Result<LlmResponse, RoleError> {
+            let prompt = request
+                .messages
+                .first()
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            Ok(LlmResponse {
+                text: Some(format!("dummy:{}", prompt)),
+                tool_calls: vec![],
+                finish_reason: "stop".to_string(),
+                usage: None,
+            })
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::default()
         }
     }
 
@@ -152,24 +184,32 @@ mod tests {
     }
 
     fn sample_config() -> AppConfig {
-        AppConfig {
-            providers: vec![ProviderConfig {
-                name: "ollama".to_string(),
-                endpoint: "http://127.0.0.1:11434/v1".to_string(),
+        let mut providers = HashMap::new();
+        providers.insert(
+            "ollama".to_string(),
+            ProviderConfig {
+                kind: "ollama".to_string(),
+                endpoint: "http://127.0.0.1:11434".to_string(),
                 auth_mode: AuthMode::None,
                 auth_env_var: None,
-                auth_token: None,
                 timeout_ms: 5000,
-                models: vec!["deepseek-coder-v2".to_string()],
-                max_context_chars: 128000,
-            }],
-            runtime: RuntimePolicy {
-                retry_max_attempts: 3,
+                models: vec![ModelSpec {
+                    name: "mistral".to_string(),
+                    context_window: 32000,
+                }],
+                capabilities: ProviderCapabilities::default(),
+            },
+        );
+
+        AppConfig {
+            system: SystemPolicy {
+                default_provider: "ollama".to_string(),
+                default_model: "mistral".to_string(),
                 max_concurrency: 4,
                 rate_limit_per_minute: 120,
-                default_provider: "ollama".to_string(),
-                default_model: "deepseek-coder-v2".to_string(),
+                retry_max_attempts: 3,
             },
+            providers,
         }
     }
 
@@ -185,7 +225,7 @@ mod tests {
         assert!(resolved.is_ok());
         if let Ok(resolved_provider) = resolved {
             assert_eq!(resolved_provider.provider_name, "ollama");
-            assert_eq!(resolved_provider.model, "deepseek-coder-v2");
+            assert_eq!(resolved_provider.model, "mistral");
 
             let completion = resolved_provider.provider.generate_completion("ping").await;
             assert!(matches!(completion, Ok(ref value) if value == "dummy:ping"));
@@ -212,7 +252,7 @@ mod tests {
         assert!(registered.is_ok());
 
         let mut config = sample_config();
-        config.runtime.default_model = "missing-model".to_string();
+        config.system.default_model = "missing-model".to_string();
 
         let result = registry.resolve_default(&config);
 
@@ -232,7 +272,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ProviderRegistryError::FactoryNotRegistered(name)) if name == "ollama"
+            Err(ProviderRegistryError::FactoryNotRegistered(kind)) if kind == "ollama"
         ));
     }
 
@@ -246,7 +286,7 @@ mod tests {
 
         assert!(matches!(
             second,
-            Err(ProviderRegistryError::FactoryAlreadyRegistered(name)) if name == "ollama"
+            Err(ProviderRegistryError::FactoryAlreadyRegistered(kind)) if kind == "ollama"
         ));
     }
 
