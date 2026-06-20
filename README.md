@@ -102,11 +102,12 @@ default_model = "deepseek-coder-v2"
 
 The recommended workflow to start your workday and orchestrate activities is the following:
 
-1. **Initialize the project:** Run `maestro init <project-name>` to create the project folder, generate default config (`maestro/config.toml`), and initial mandatory folders. Then access it (`cd <project-name>`).
-2. **Validate the terrain:** Run `maestro validate-config` to ensure your settings and file dependencies are correct.
-3. **Open the panel:** Type `maestro tui` to access your interactive dashboard.
-4. **Plan and delegate:** Inside the TUI, use the commands `/new scope`, `/new persona`, and `/new skill` to map your architecture requirements.
-5. **Get to work:** Run `maestro run` to execute the automated work cycles of your agent team and track the logs in the Harness.
+1. **Initialize the project:** Run `maestro init <project-name>` to create the project folder, generate default config (`maestro/config.toml`), and initial mandatory folders. The command opens the onboarding interview mode by default.
+2. **Optional automation mode:** Use `maestro init <project-name> --no-tui` when you need non-interactive setup for scripts or CI.
+3. **Validate the terrain:** Run `maestro validate-config` to ensure your settings and file dependencies are correct.
+4. **Open the panel:** Type `maestro tui` to access your interactive dashboard.
+5. **Plan and delegate:** Inside the TUI, use the commands `/new scope`, `/new persona`, and `/new skill` to map your architecture requirements.
+6. **Get to work:** Run `maestro run` to execute the automated work cycles of your agent team and track the logs in the Harness.
 
 ### Other Useful Terminal Commands (CLI)
 

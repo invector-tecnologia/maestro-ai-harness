@@ -3,6 +3,18 @@
 ## Goal
 Set up a new Maestro project using the guided Ratatui flow.
 
+## Recommended Start
+```bash
+maestro init my-project
+```
+
+This command scaffolds the project and opens the onboarding interview mode automatically.
+
+For non-interactive automation:
+```bash
+maestro init my-project --no-tui
+```
+
 ## How To Start Directly
 ```bash
 maestro onboarding --mode detailed --config ~/.config/maestro/config.toml

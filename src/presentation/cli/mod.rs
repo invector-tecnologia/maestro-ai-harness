@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use tracing::{info, warn};
 
 use crate::application::agent_runtime::AgentRuntime;
@@ -64,6 +64,8 @@ pub enum Commands {
     InitConfig,
     Init {
         project_name: String,
+        #[arg(long, action = ArgAction::SetTrue)]
+        no_tui: bool,
     },
     Logout,
     Rag {
@@ -147,64 +149,17 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             Ok(CliOutcome::RunCompleted)
         }
         Commands::Tui { config } => {
-            let (environment, runtime) = if let Ok(cfg) = ConfigLoader::load(config) {
-                let mut registry = ProviderRegistry::new();
-                let _ = registry.register_builtin_providers();
-                if let Ok(resolved) = registry.resolve_default(&cfg) {
-                    let env = Arc::new(Environment::new(128));
-                    let rt = Arc::new(AgentRuntime::new(Arc::clone(&env)));
-                    if let Ok(registrations) =
-                        registrations_from_default_personas(resolved.provider)
-                    {
-                        let _ = rt.start_agents(registrations).await;
-                    }
-                    (Some(env), Some(rt))
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
-
-            let tui_result =
-                run_tui(environment, runtime.clone(), OnboardingBootstrap::Detailed).await;
-            if let Some(rt) = runtime {
-                let _ = rt.stop_all().await;
-            }
-            tui_result?;
+            run_tui_with_runtime(config, OnboardingBootstrap::Detailed).await?;
 
             Ok(CliOutcome::TuiCompleted)
         }
         Commands::Onboarding { config, mode } => {
-            let (environment, runtime) = if let Ok(cfg) = ConfigLoader::load(config) {
-                let mut registry = ProviderRegistry::new();
-                let _ = registry.register_builtin_providers();
-                if let Ok(resolved) = registry.resolve_default(&cfg) {
-                    let env = Arc::new(Environment::new(128));
-                    let rt = Arc::new(AgentRuntime::new(Arc::clone(&env)));
-                    if let Ok(registrations) =
-                        registrations_from_default_personas(resolved.provider)
-                    {
-                        let _ = rt.start_agents(registrations).await;
-                    }
-                    (Some(env), Some(rt))
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
-
             let bootstrap = match mode {
                 OnboardingMode::Fast => OnboardingBootstrap::Fast,
                 OnboardingMode::Detailed => OnboardingBootstrap::Detailed,
             };
 
-            let tui_result = run_tui(environment, runtime.clone(), bootstrap).await;
-            if let Some(rt) = runtime {
-                let _ = rt.stop_all().await;
-            }
-            tui_result?;
+            run_tui_with_runtime(config, bootstrap).await?;
 
             Ok(CliOutcome::OnboardingCompleted)
         }
@@ -262,7 +217,10 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             }
             Ok(CliOutcome::ConfigInitialized)
         }
-        Commands::Init { project_name } => {
+        Commands::Init {
+            project_name,
+            no_tui,
+        } => {
             let base_dir = std::env::current_dir()?;
             let root = base_dir.join(&project_name);
             fs::create_dir_all(&root)?;
@@ -288,6 +246,24 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             scaffold_skills(&governance)?;
 
             info!("Project {} initialized", project_name);
+
+            if !no_tui {
+                let old_dir = std::env::current_dir()?;
+                std::env::set_current_dir(&root)?;
+
+                let tui_result = run_tui_with_runtime(None, OnboardingBootstrap::Detailed).await;
+                let restore_result = std::env::set_current_dir(&old_dir);
+
+                if let Err(err) = restore_result {
+                    warn!(
+                        error = %err,
+                        "failed to restore original working directory after init"
+                    );
+                }
+
+                tui_result?;
+            }
+
             Ok(CliOutcome::ProjectInitialized)
         }
         Commands::Logout => {
@@ -373,6 +349,35 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             }
         }
     }
+}
+
+async fn run_tui_with_runtime(
+    config: Option<PathBuf>,
+    bootstrap: OnboardingBootstrap,
+) -> Result<()> {
+    let (environment, runtime) = if let Ok(cfg) = ConfigLoader::load(config) {
+        let mut registry = ProviderRegistry::new();
+        let _ = registry.register_builtin_providers();
+        if let Ok(resolved) = registry.resolve_default(&cfg) {
+            let env = Arc::new(Environment::new(128));
+            let rt = Arc::new(AgentRuntime::new(Arc::clone(&env)));
+            if let Ok(registrations) = registrations_from_default_personas(resolved.provider) {
+                let _ = rt.start_agents(registrations).await;
+            }
+            (Some(env), Some(rt))
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    let tui_result = run_tui(environment, runtime.clone(), bootstrap).await;
+    if let Some(rt) = runtime {
+        let _ = rt.stop_all().await;
+    }
+    tui_result?;
+    Ok(())
 }
 
 async fn build_rag_embedder() -> Option<Arc<dyn RagEmbedder>> {
@@ -604,7 +609,22 @@ default_model = "deepseek-coder-v2"
         let cli = Cli::parse_from(["maestro", "init", "meu-projeto"]);
         assert!(matches!(
             cli.command,
-            Some(Commands::Init { project_name }) if project_name == "meu-projeto"
+            Some(Commands::Init {
+                project_name,
+                no_tui: false
+            }) if project_name == "meu-projeto"
+        ));
+    }
+
+    #[test]
+    fn parses_init_command_with_no_tui() {
+        let cli = Cli::parse_from(["maestro", "init", "meu-projeto", "--no-tui"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Init {
+                project_name,
+                no_tui: true
+            }) if project_name == "meu-projeto"
         ));
     }
 
