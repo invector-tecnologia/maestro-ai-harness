@@ -1,4 +1,5 @@
 pub mod anthropic_adapter;
+pub mod endpoint_utils;
 pub mod gemini_adapter;
 pub mod ollama_adapter;
 pub mod openai_adapter;

@@ -17,7 +17,7 @@ system:
 providers:
   ollama:
     kind: "ollama"
-    endpoint: "http://127.0.0.1:11434"
+    endpoint: "http://127.0.0.1:11434/v1"
     auth_mode: "none"
     timeout_ms: 60000
     models:

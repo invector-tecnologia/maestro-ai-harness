@@ -57,6 +57,10 @@ pub enum Commands {
         #[arg(long, value_enum, default_value_t = OnboardingMode::Detailed)]
         mode: OnboardingMode,
     },
+    Interview {
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     ValidateConfig {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -127,6 +131,7 @@ pub enum CliOutcome {
     RunCompleted,
     TuiCompleted,
     OnboardingCompleted,
+    InterviewCompleted,
     ConfigValid,
     AgentsListed(Vec<String>),
     DoctorOk,
@@ -195,6 +200,11 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             run_tui_with_runtime(config, bootstrap).await?;
 
             Ok(CliOutcome::OnboardingCompleted)
+        }
+        Commands::Interview { config } => {
+            run_tui_with_runtime(config, OnboardingBootstrap::InitInterview).await?;
+
+            Ok(CliOutcome::InterviewCompleted)
         }
         Commands::ValidateConfig { config } => {
             let _ = ConfigLoader::load(config)?;
@@ -756,6 +766,15 @@ mod tests {
                 mode: OnboardingMode::Fast,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn parses_interview_command() {
+        let cli = Cli::parse_from(["maestro", "interview"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Interview { config: None })
         ));
     }
 

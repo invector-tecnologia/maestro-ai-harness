@@ -5,6 +5,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::ports::rag::{RagEmbedder, RagError};
+use crate::infrastructure::llm::endpoint_utils::normalize_ollama_embeddings_endpoint;
 
 pub struct OllamaEmbedder {
     client: Client,
@@ -21,7 +22,7 @@ impl OllamaEmbedder {
 
         Ok(Self {
             client,
-            endpoint: normalize_embeddings_endpoint(base_endpoint),
+            endpoint: normalize_ollama_embeddings_endpoint(base_endpoint),
             model: model.to_string(),
         })
     }
@@ -80,34 +81,22 @@ impl RagEmbedder for OllamaEmbedder {
     }
 }
 
-fn normalize_embeddings_endpoint(base: &str) -> String {
-    let trimmed = base.trim_end_matches('/');
-    if trimmed.ends_with("/api/embeddings") {
-        return trimmed.to_string();
-    }
-    if trimmed.ends_with("/v1") {
-        return format!("{trimmed}/embeddings");
-    }
-
-    format!("{trimmed}/api/embeddings")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::infrastructure::llm::endpoint_utils::normalize_ollama_embeddings_endpoint;
 
     #[test]
     fn normalizes_ollama_endpoint() {
         assert_eq!(
-            normalize_embeddings_endpoint("http://127.0.0.1:11434"),
+            normalize_ollama_embeddings_endpoint("http://127.0.0.1:11434"),
             "http://127.0.0.1:11434/api/embeddings"
         );
         assert_eq!(
-            normalize_embeddings_endpoint("http://127.0.0.1:11434/"),
+            normalize_ollama_embeddings_endpoint("http://127.0.0.1:11434/"),
             "http://127.0.0.1:11434/api/embeddings"
         );
         assert_eq!(
-            normalize_embeddings_endpoint("http://127.0.0.1:11434/v1"),
+            normalize_ollama_embeddings_endpoint("http://127.0.0.1:11434/v1"),
             "http://127.0.0.1:11434/v1/embeddings"
         );
     }

@@ -166,6 +166,8 @@ impl TuiApp {
             .push("  /new scope     - Create a new work scope".to_string());
         self.logs
             .push("  /new skill     - Teach a new skill to an agent".to_string());
+        self.logs
+            .push("  /deps          - Create/edit maestro project deps manifest".to_string());
         self.logs.push(String::new());
         self.logs.push("Check Status:".to_string());
         self.logs
@@ -217,7 +219,6 @@ impl TuiApp {
         self.refresh_dependency_domains();
         self.normalize_readiness_selection();
     }
-
     fn refresh_dependency_domains(&mut self) {
         let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         self.dependency_domains = evaluate_project_dependency_domains(&root);
@@ -605,6 +606,9 @@ impl TuiApp {
                     let answer = self.input.trim().to_string();
                     self.input.clear();
                     if !answer.is_empty() {
+                        if answer.starts_with("/deps") {
+                            return Some(UserAction::ManageProjectDeps);
+                        }
                         return Some(UserAction::ProcessInterviewAnswer(answer));
                     }
                     return None;
@@ -817,6 +821,7 @@ enum UserAction {
     CompleteWizard(WizardSubmission),
     RunReadinessAction(ReadinessAction),
     ProcessInterviewAnswer(String),
+    ManageProjectDeps,
     ApproveInterviewProposals,
     RejectInterviewProposals,
     Quit,
@@ -1008,6 +1013,50 @@ pub async fn run_tui(
                                     app.logs.push(
                                         "⚠️ Interview state unavailable. Restart onboarding interview.".to_string(),
                                     );
+                                }
+                            }
+                            Some(UserAction::ManageProjectDeps) => {
+                                let deps_path = root_path.join("maestro").join("project-deps.yaml");
+                                if !deps_path.exists() {
+                                    if let Some(parent) = deps_path.parent() {
+                                        let _ = fs::create_dir_all(parent);
+                                    }
+                                    if fs::write(&deps_path, DEFAULT_PROJECT_DEPS_TEMPLATE).is_ok() {
+                                        app.logs.push(format!(
+                                            "🧩 Created project deps manifest at {}",
+                                            deps_path.display()
+                                        ));
+                                    } else {
+                                        app.logs.push(
+                                            "⚠️ Failed to create maestro/project-deps.yaml from interview mode"
+                                                .to_string(),
+                                        );
+                                        continue;
+                                    }
+                                } else {
+                                    app.logs.push(format!(
+                                        "🧩 Project deps manifest already exists at {}",
+                                        deps_path.display()
+                                    ));
+                                }
+
+                                app.logs.push(
+                                    "✍️ Edit maestro/project-deps.yaml to add required tools and checks."
+                                        .to_string(),
+                                );
+                                app.logs.push(
+                                    "✅ Validate with: maestro deps check --scope project".to_string(),
+                                );
+
+                                if let Some(env) = &environment {
+                                    let _ = env
+                                        .publish(Message::new(
+                                            "Maestro".to_string(),
+                                            "Project deps helper: edit maestro/project-deps.yaml and run 'maestro deps check --scope project'."
+                                                .to_string(),
+                                            app.maestro_message_id,
+                                        ))
+                                        .await;
                                 }
                             }
                             Some(UserAction::ApproveInterviewProposals) => {
@@ -2680,6 +2729,21 @@ mod tests {
         let backspace = app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         assert!(backspace.is_none());
         assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn interview_mode_deps_command_dispatches_manage_action() {
+        let mut app = TuiApp {
+            mode: UIMode::Interview,
+            ..TuiApp::default()
+        };
+
+        for c in "/deps".chars() {
+            let _ = app.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(action, Some(UserAction::ManageProjectDeps)));
     }
 
     #[test]

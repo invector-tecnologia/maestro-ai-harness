@@ -11,6 +11,7 @@ use crate::domain::ports::llm_provider::{
     LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities,
 };
 use crate::domain::ports::role::RoleError;
+use crate::infrastructure::llm::endpoint_utils::normalize_chat_completions_endpoint;
 use crate::infrastructure::llm::provider_registry::ProviderRegistryError;
 
 pub struct OpenAiAdapter {
@@ -63,7 +64,7 @@ impl OpenAiAdapter {
 
         Ok(Arc::new(Self {
             client,
-            endpoint: normalize_endpoint(&provider.endpoint),
+            endpoint: normalize_chat_completions_endpoint(&provider.endpoint),
             model,
             bearer_token,
             max_context_tokens,
@@ -193,11 +194,6 @@ impl LlmProvider for OpenAiAdapter {
     }
 }
 
-fn normalize_endpoint(base: &str) -> String {
-    let trimmed = base.trim_end_matches('/');
-    format!("{trimmed}/chat/completions")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,7 +233,7 @@ mod tests {
             let client = Client::builder().timeout(timeout).build().unwrap();
             let adapter = OpenAiAdapter {
                 client,
-                endpoint: normalize_endpoint(endpoint.as_str()),
+                endpoint: normalize_chat_completions_endpoint(endpoint.as_str()),
                 model: "gpt-4".to_string(),
                 bearer_token: None,
                 max_context_tokens: 8192,

@@ -189,7 +189,7 @@ mod tests {
             "ollama".to_string(),
             ProviderConfig {
                 kind: "ollama".to_string(),
-                endpoint: "http://127.0.0.1:11434".to_string(),
+                endpoint: "http://127.0.0.1:11434/v1".to_string(),
                 auth_mode: AuthMode::None,
                 auth_env_var: None,
                 timeout_ms: 5000,

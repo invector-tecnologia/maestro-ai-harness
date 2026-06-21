@@ -59,7 +59,7 @@ providers:
 
   ollama:
     kind: "ollama"
-    endpoint: "http://localhost:11434"
+    endpoint: "http://localhost:11434/v1"
     auth_mode: "none"
     timeout_ms: 60000
     models:

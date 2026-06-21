@@ -13,6 +13,7 @@ use crate::domain::ports::llm_provider::{
     LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities,
 };
 use crate::domain::ports::role::RoleError;
+use crate::infrastructure::llm::endpoint_utils::normalize_ollama_chat_endpoint;
 use crate::infrastructure::llm::provider_registry::ProviderRegistryError;
 
 pub struct OllamaAdapter {
@@ -65,7 +66,7 @@ impl OllamaAdapter {
 
         Ok(Arc::new(Self {
             client,
-            endpoint: normalize_endpoint(&provider.endpoint),
+            endpoint: normalize_ollama_chat_endpoint(&provider.endpoint),
             model,
             bearer_token,
             max_context_chars,
@@ -275,11 +276,6 @@ impl OllamaAdapter {
     }
 }
 
-fn normalize_endpoint(base: &str) -> String {
-    let trimmed = base.trim_end_matches('/');
-    format!("{trimmed}/chat/completions")
-}
-
 fn summarize_error_body(body: &str) -> String {
     let clean = body.replace('\n', " ").trim().to_string();
     if clean.is_empty() {
@@ -347,7 +343,7 @@ mod tests {
 
         if let Ok(endpoint) = endpoint_result {
             let adapter = OllamaAdapter::with_parts(
-                normalize_endpoint(endpoint.as_str()),
+                normalize_ollama_chat_endpoint(endpoint.as_str()),
                 "deepseek-coder-v2".to_string(),
                 100,
                 None,
@@ -368,7 +364,7 @@ mod tests {
 
         if let Ok(endpoint) = endpoint_result {
             let adapter = OllamaAdapter::with_parts(
-                normalize_endpoint(endpoint.as_str()),
+                normalize_ollama_chat_endpoint(endpoint.as_str()),
                 "deepseek-coder-v2".to_string(),
                 20,
                 None,
@@ -415,7 +411,7 @@ mod tests {
 
         if let Ok(endpoint) = endpoint_result {
             let adapter = OllamaAdapter::with_parts(
-                normalize_endpoint(endpoint.as_str()),
+                normalize_ollama_chat_endpoint(endpoint.as_str()),
                 "deepseek-coder-v2".to_string(),
                 100,
                 None,
