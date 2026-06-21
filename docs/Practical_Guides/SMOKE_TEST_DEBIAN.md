@@ -29,18 +29,18 @@ maestro list-agents
 ```
 3. Verify generated config and directories:
 ```bash
-test -f /etc/maestro/config.toml
+test -f /etc/maestro/config.yaml
 test -d /var/lib/maestro
 test -d /var/log/maestro
 ```
 4. Validate runtime doctor command:
 ```bash
-maestro doctor --config /etc/maestro/config.toml
+maestro doctor --config /etc/maestro/config.yaml
 ```
 5. Remove package preserving config:
 ```bash
 sudo dpkg -r maestro-ai
-test -f /etc/maestro/config.toml
+test -f /etc/maestro/config.yaml
 ```
 6. Purge package and runtime data:
 ```bash
@@ -53,5 +53,5 @@ sudo dpkg -P maestro-ai
 ## Expected result
 - Installation works in a clean environment.
 - Binary is available and commands execute.
-- Normal removal preserves `/etc/maestro/config.toml`.
+- Normal removal preserves `/etc/maestro/config.yaml`.
 - Purge removes `/etc/maestro`, `/var/lib/maestro`, and `/var/log/maestro`.

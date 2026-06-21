@@ -5,6 +5,8 @@ use thiserror::Error;
 pub enum RoleError {
     #[error("LLM error")]
     LlmError,
+    #[error("LLM error: {0}")]
+    LlmErrorDetailed(String),
     #[error("Reasoning error")]
     ReasoningError,
 }

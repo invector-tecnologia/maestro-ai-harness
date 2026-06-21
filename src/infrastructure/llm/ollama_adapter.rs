@@ -229,18 +229,27 @@ impl OllamaAdapter {
 
         let response = builder.send().await.map_err(|error| {
             error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "request failed for ollama provider");
-            RoleError::LlmError
+            RoleError::LlmErrorDetailed(format!("request failed: {}", error))
         })?;
 
         let status = response.status();
         if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<body unavailable>".to_string());
             error!(latency_ms = started_at.elapsed().as_millis(), status = %status, "invalid HTTP response from ollama provider");
-            return Err(RoleError::LlmError);
+            return Err(RoleError::LlmErrorDetailed(format!(
+                "invalid HTTP status {} from ollama endpoint '{}': {}",
+                status,
+                self.endpoint,
+                summarize_error_body(&body)
+            )));
         }
 
         let payload: ChatCompletionResponse = response.json().await.map_err(|error| {
             error!(latency_ms = started_at.elapsed().as_millis(), error = %error, "invalid payload received from ollama provider");
-            RoleError::LlmError
+            RoleError::LlmErrorDetailed(format!("invalid JSON payload: {}", error))
         })?;
 
         let content = payload
@@ -253,7 +262,9 @@ impl OllamaAdapter {
                     latency_ms = started_at.elapsed().as_millis(),
                     "empty response content from ollama provider"
                 );
-                RoleError::LlmError
+                RoleError::LlmErrorDetailed(
+                    "ollama response payload had no text content".to_string(),
+                )
             })?;
 
         info!(
@@ -267,6 +278,21 @@ impl OllamaAdapter {
 fn normalize_endpoint(base: &str) -> String {
     let trimmed = base.trim_end_matches('/');
     format!("{trimmed}/chat/completions")
+}
+
+fn summarize_error_body(body: &str) -> String {
+    let clean = body.replace('\n', " ").trim().to_string();
+    if clean.is_empty() {
+        return "<empty body>".to_string();
+    }
+
+    let mut chars = clean.chars();
+    let summary = chars.by_ref().take(160).collect::<String>();
+    if chars.next().is_some() {
+        format!("{}...", summary)
+    } else {
+        summary
+    }
 }
 
 #[cfg(test)]
@@ -351,7 +377,10 @@ mod tests {
 
             if let Ok(client) = adapter {
                 let result = client.generate_completion("ping").await;
-                assert!(matches!(result, Err(RoleError::LlmError)));
+                assert!(matches!(
+                    result,
+                    Err(RoleError::LlmError) | Err(RoleError::LlmErrorDetailed(_))
+                ));
             }
         }
     }
@@ -365,7 +394,10 @@ mod tests {
 
         if let Ok(client) = adapter {
             let result = client.generate_completion("ping").await;
-            assert!(matches!(result, Err(RoleError::LlmError)));
+            assert!(matches!(
+                result,
+                Err(RoleError::LlmError) | Err(RoleError::LlmErrorDetailed(_))
+            ));
         }
     }
 
@@ -392,7 +424,10 @@ mod tests {
 
             if let Ok(client) = adapter {
                 let result = client.generate_completion("ping").await;
-                assert!(matches!(result, Err(RoleError::LlmError)));
+                assert!(matches!(
+                    result,
+                    Err(RoleError::LlmError) | Err(RoleError::LlmErrorDetailed(_))
+                ));
             }
         }
     }

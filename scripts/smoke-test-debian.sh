@@ -30,18 +30,18 @@ command -v maestro >/dev/null
 maestro --help >/dev/null
 
 echo "[3/7] Verifying config and dirs"
-test -f /etc/maestro/config.toml
+test -f /etc/maestro/config.yaml
 test -d /var/lib/maestro
 test -d /var/log/maestro
 
 echo "[4/7] Running doctor"
-maestro doctor --config /etc/maestro/config.toml >/dev/null
+maestro doctor --config /etc/maestro/config.yaml >/dev/null
 
 echo "[5/7] Removing package (preserve mode)"
 sudo dpkg -r maestro-ai
 
 echo "[6/7] Ensuring config preserved after remove"
-test -f /etc/maestro/config.toml
+test -f /etc/maestro/config.yaml
 
 echo "[7/7] Purging package data"
 sudo dpkg -P maestro-ai || true

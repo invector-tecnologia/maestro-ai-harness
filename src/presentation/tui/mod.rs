@@ -27,6 +27,7 @@ use crate::application::agent_runtime::{AgentHealth, AgentRuntime};
 use crate::application::config::DEFAULT_CONFIG_TEMPLATE;
 use crate::application::environment::Environment;
 use crate::application::markdown_governance::MarkdownGovernance;
+use crate::application::project_deps::{ProjectDepsConfig, DEFAULT_PROJECT_DEPS_TEMPLATE};
 use crate::domain::models::message::Message;
 use crate::infrastructure::llm::gemini_adapter::GeminiAdapter;
 
@@ -51,9 +52,14 @@ enum PanelFocus {
     Readiness,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ReadinessAction {
     CreateConfigTemplate,
+    CreateProjectDepsTemplate,
+    RemediateProjectDependency {
+        dependency: String,
+        install_hint: Option<String>,
+    },
     OpenConfigHint,
     ConfigureProviders,
     StartProvider,
@@ -63,15 +69,21 @@ enum ReadinessAction {
 }
 
 impl ReadinessAction {
-    fn label(&self) -> &'static str {
+    fn label(&self) -> String {
         match self {
-            ReadinessAction::CreateConfigTemplate => "Create config template",
-            ReadinessAction::OpenConfigHint => "Open config guidance",
-            ReadinessAction::ConfigureProviders => "Configure providers",
-            ReadinessAction::StartProvider => "Start provider",
-            ReadinessAction::CreateScope => "Create scope",
-            ReadinessAction::CreatePersona => "Create persona",
-            ReadinessAction::CreateSkill => "Create skill",
+            ReadinessAction::CreateConfigTemplate => "Create config template".to_string(),
+            ReadinessAction::CreateProjectDepsTemplate => {
+                "Create project deps template".to_string()
+            }
+            ReadinessAction::RemediateProjectDependency { dependency, .. } => {
+                format!("Fix required dependency: {dependency}")
+            }
+            ReadinessAction::OpenConfigHint => "Open config guidance".to_string(),
+            ReadinessAction::ConfigureProviders => "Configure providers".to_string(),
+            ReadinessAction::StartProvider => "Start provider".to_string(),
+            ReadinessAction::CreateScope => "Create scope".to_string(),
+            ReadinessAction::CreatePersona => "Create persona".to_string(),
+            ReadinessAction::CreateSkill => "Create skill".to_string(),
         }
     }
 }
@@ -83,6 +95,7 @@ pub struct TuiApp {
     pub input: String,
     pub mode: UIMode,
     readiness: crate::application::readiness::ReadinessState,
+    dependency_domains: DependencyDomainsState,
     focus: PanelFocus,
     readiness_selected_action: usize,
     wizard: Option<CreationWizard>,
@@ -98,6 +111,16 @@ pub struct TuiApp {
     maestro_message_id: Option<Uuid>,
     approval_modal_visible: bool,
     last_runtime_event_count: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DependencyDomainsState {
+    project_manifest_found: bool,
+    project_manifest_valid: bool,
+    project_required_checks_passed: bool,
+    project_failed_required: Vec<String>,
+    project_failed_required_hints: Vec<(String, Option<String>)>,
+    project_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +144,7 @@ impl TuiApp {
         readiness: crate::application::readiness::ReadinessState,
     ) -> Self {
         self.readiness = readiness;
+        self.refresh_dependency_domains();
         self
     }
 
@@ -152,7 +176,7 @@ impl TuiApp {
         self.logs
             .push("Edit Configurations (in text editor):".to_string());
         self.logs
-            .push("  maestro/config.toml       - Configure providers/models".to_string());
+            .push("  maestro/config.yaml       - Configure providers/models".to_string());
         self.logs
             .push("  maestro/personas/*.md     - Edit personas freely".to_string());
         self.logs
@@ -190,7 +214,13 @@ impl TuiApp {
     fn refresh_readiness(&mut self, _governance: &MarkdownGovernance) {
         let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         self.readiness = crate::application::readiness::run_checks(&root);
+        self.refresh_dependency_domains();
         self.normalize_readiness_selection();
+    }
+
+    fn refresh_dependency_domains(&mut self) {
+        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        self.dependency_domains = evaluate_project_dependency_domains(&root);
     }
 
     fn readiness_actions(&self) -> Vec<ReadinessAction> {
@@ -200,6 +230,17 @@ impl TuiApp {
             actions.push(ReadinessAction::CreateConfigTemplate);
         } else {
             actions.push(ReadinessAction::OpenConfigHint);
+        }
+
+        if !self.dependency_domains.project_manifest_found {
+            actions.push(ReadinessAction::CreateProjectDepsTemplate);
+        }
+
+        for (dependency, install_hint) in &self.dependency_domains.project_failed_required_hints {
+            actions.push(ReadinessAction::RemediateProjectDependency {
+                dependency: dependency.clone(),
+                install_hint: install_hint.clone(),
+            });
         }
 
         if self.readiness.has_config && !self.readiness.has_providers {
@@ -237,7 +278,7 @@ impl TuiApp {
 
     fn selected_readiness_action(&self) -> Option<ReadinessAction> {
         let actions = self.readiness_actions();
-        actions.get(self.readiness_selected_action).copied()
+        actions.get(self.readiness_selected_action).cloned()
     }
 
     fn select_next_readiness_action(&mut self) {
@@ -285,6 +326,44 @@ impl TuiApp {
                 } else {
                     self.logs
                         .push("readiness action: config already exists".to_string());
+                }
+            }
+            ReadinessAction::CreateProjectDepsTemplate => {
+                let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let deps_path = root.join("maestro").join("project-deps.yaml");
+                if !deps_path.exists() {
+                    if let Some(parent) = deps_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    if fs::write(&deps_path, DEFAULT_PROJECT_DEPS_TEMPLATE).is_ok() {
+                        self.logs.push(format!(
+                            "readiness action: project deps template created at {}",
+                            deps_path.display()
+                        ));
+                    } else {
+                        self.logs.push(
+                            "readiness action: failed to create project deps template".to_string(),
+                        );
+                    }
+                } else {
+                    self.logs
+                        .push("readiness action: project deps manifest already exists".to_string());
+                }
+            }
+            ReadinessAction::RemediateProjectDependency {
+                dependency,
+                install_hint,
+            } => {
+                self.logs.push(format!(
+                    "readiness action: dependency '{dependency}' is required but failing"
+                ));
+                if let Some(hint) = install_hint {
+                    self.logs.push(format!("readiness action: {hint}"));
+                } else {
+                    self.logs.push(
+                        "readiness action: run 'maestro deps check --scope project' for full diagnostics"
+                            .to_string(),
+                    );
                 }
             }
             ReadinessAction::OpenConfigHint => {
@@ -608,13 +687,13 @@ impl TuiApp {
 
                     if !self.readiness.has_config {
                         self.logs.push(
-                            "  1. Create maestro/config.toml (use: maestro init-config)"
+                            "  1. Create maestro/config.yaml (use: maestro init-config)"
                                 .to_string(),
                         );
                     }
                     if self.readiness.has_config && !self.readiness.has_providers {
                         self.logs.push(
-                            "  2. Define at least one valid [[providers]] entry in config.toml"
+                            "  2. Define at least one provider in config.yaml under providers:"
                                 .to_string(),
                         );
                     }
@@ -635,6 +714,21 @@ impl TuiApp {
                     if !self.readiness.has_skills {
                         self.logs
                             .push("  6. Create a skill: /new skill".to_string());
+                    }
+                    if !self.dependency_domains.project_manifest_found {
+                        self.logs.push(
+                            "  7. Create maestro/project-deps.yaml (use readiness action or maestro scaffold-markdown)"
+                                .to_string(),
+                        );
+                    }
+                    if self.dependency_domains.project_manifest_found
+                        && (!self.dependency_domains.project_manifest_valid
+                            || !self.dependency_domains.project_required_checks_passed)
+                    {
+                        self.logs.push(
+                            "  8. Validate project dependencies: maestro deps check --scope project"
+                                .to_string(),
+                        );
                     }
                     None
                 } else if command.starts_with("/ask ") {
@@ -753,7 +847,7 @@ pub async fn run_tui(
     match crate::application::readiness::auto_bootstrap_config(&root_path) {
         Ok(true) => {
             app.logs
-                .push("✅ Auto-configured maestro/config.toml (Ollama detected!)".to_string());
+                .push("✅ Auto-configured maestro/config.yaml (Ollama detected!)".to_string());
         }
         Ok(false) => {
             // Config already exists
@@ -879,10 +973,20 @@ pub async fn run_tui(
 
                                 if app.maestro_message_id.is_none() {
                                     app.logs.push(
-                                        "⚠️ Maestro is not answering yet. Configure provider/model in maestro/config.toml and restart interview."
+                                        "⚠️ Maestro is not answering yet. Configure provider/model in maestro/config.yaml and restart interview."
                                             .to_string(),
                                     );
                                     continue;
+                                }
+
+                                if let Some(env) = &environment {
+                                    let _ = env
+                                        .publish(Message::new(
+                                            "user".to_string(),
+                                            answer.clone(),
+                                            None,
+                                        ))
+                                        .await;
                                 }
 
                                 if let (Some(bot), Some(session_lock)) =
@@ -1077,12 +1181,17 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
 }
 
 fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
+    let all_ready = app.readiness.is_ready()
+        && app.dependency_domains.project_manifest_found
+        && app.dependency_domains.project_manifest_valid
+        && app.dependency_domains.project_required_checks_passed;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(12), Constraint::Min(10)])
+        .constraints([Constraint::Length(18), Constraint::Min(8)])
         .split(area);
 
-    let (headline, headline_style) = if app.readiness.is_ready() {
+    let (headline, headline_style) = if all_ready {
         (
             "Maestro is ready ✅",
             Style::default()
@@ -1098,8 +1207,34 @@ fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ap
 
     let mut lines = vec![headline.to_string(), String::new()];
 
+    lines.push("Harness dependencies:".to_string());
     for check in &app.readiness.items {
         lines.push(readiness_line(&check.name, check.passed));
+    }
+
+    lines.push(String::new());
+    lines.push("Project dependencies:".to_string());
+    lines.push(readiness_line(
+        "project-deps manifest",
+        app.dependency_domains.project_manifest_found,
+    ));
+    lines.push(readiness_line(
+        "project-deps schema",
+        app.dependency_domains.project_manifest_valid,
+    ));
+    lines.push(readiness_line(
+        "required dependency checks",
+        app.dependency_domains.project_required_checks_passed,
+    ));
+
+    if !app.dependency_domains.project_failed_required.is_empty() {
+        lines.push(format!(
+            "missing: {}",
+            app.dependency_domains.project_failed_required.join(", ")
+        ));
+    }
+    if let Some(error) = &app.dependency_domains.project_error {
+        lines.push(format!("error: {error}"));
     }
 
     let paragraph = Paragraph::new(lines.join("\n"))
@@ -1108,7 +1243,7 @@ fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ap
             Block::default()
                 .title("Readiness")
                 .borders(Borders::ALL)
-                .border_style(if app.readiness.is_ready() {
+                .border_style(if all_ready {
                     Style::default().fg(Color::Green)
                 } else {
                     Style::default().fg(Color::Red)
@@ -1129,7 +1264,7 @@ fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ap
     ));
     actions_lines.push(String::new());
 
-    if !app.readiness.is_ready() {
+    if !all_ready {
         let actions = app.readiness_actions();
         for (index, action) in actions.iter().enumerate() {
             let is_selected =
@@ -1159,6 +1294,58 @@ fn readiness_line(label: &str, ok: bool) -> String {
         format!("[x] {label}")
     } else {
         format!("[ ] {label}")
+    }
+}
+
+fn evaluate_project_dependency_domains(root: &std::path::Path) -> DependencyDomainsState {
+    let deps_path = root.join("maestro").join("project-deps.yaml");
+    if !deps_path.exists() {
+        return DependencyDomainsState {
+            project_manifest_found: false,
+            project_manifest_valid: false,
+            project_required_checks_passed: false,
+            project_failed_required: Vec::new(),
+            project_failed_required_hints: Vec::new(),
+            project_error: Some("maestro/project-deps.yaml not found".to_string()),
+        };
+    }
+
+    match ProjectDepsConfig::load(Some(deps_path)) {
+        Ok(config) => {
+            let mut failed_required = Vec::new();
+            let mut failed_required_hints = Vec::new();
+
+            for dep in config.dependencies.iter().filter(|dep| dep.required) {
+                let passed = std::process::Command::new("sh")
+                    .arg("-lc")
+                    .arg(&dep.check_command)
+                    .status()
+                    .map(|status| status.success())
+                    .unwrap_or(false);
+
+                if !passed {
+                    failed_required.push(dep.name.clone());
+                    failed_required_hints.push((dep.name.clone(), dep.install_hint.clone()));
+                }
+            }
+
+            DependencyDomainsState {
+                project_manifest_found: true,
+                project_manifest_valid: true,
+                project_required_checks_passed: failed_required.is_empty(),
+                project_failed_required: failed_required,
+                project_failed_required_hints: failed_required_hints,
+                project_error: None,
+            }
+        }
+        Err(error) => DependencyDomainsState {
+            project_manifest_found: true,
+            project_manifest_valid: false,
+            project_required_checks_passed: false,
+            project_failed_required: Vec::new(),
+            project_failed_required_hints: Vec::new(),
+            project_error: Some(error.to_string()),
+        },
     }
 }
 
@@ -1835,7 +2022,7 @@ async fn enqueue_interview_question(
     if let Some(env) = environment {
         let _ = env
             .publish(Message::new(
-                "maestro".to_string(),
+                "Maestro".to_string(),
                 format!("Interview question {}: {}", next_turn, question_text),
                 None,
             ))
@@ -1896,7 +2083,7 @@ async fn apply_interview_scope_proposals(
     if let Some(env) = environment {
         let _ = env
             .publish(Message::new(
-                "maestro".to_string(),
+                "Maestro".to_string(),
                 format!("Product handoff: {}", summary),
                 app.maestro_message_id,
             ))
@@ -1960,7 +2147,7 @@ async fn run_maestro_wakeup_check(
 ) -> bool {
     let Some(env) = environment else {
         app.logs.push(
-            "⚠️ Maestro runtime is not connected. Configure provider and model in maestro/config.toml."
+            "⚠️ Maestro runtime is not connected. Configure provider and model in maestro/config.yaml."
                 .to_string(),
         );
         return false;
@@ -1968,9 +2155,17 @@ async fn run_maestro_wakeup_check(
 
     if let Some(rt) = runtime {
         let health = rt.health_snapshot().await;
-        if health.is_empty() {
+        let maestro_running = matches!(
+            health.get("Maestro"),
+            Some(AgentHealth::Idle)
+                | Some(AgentHealth::Observing)
+                | Some(AgentHealth::Thinking)
+                | Some(AgentHealth::Acting)
+        );
+
+        if !maestro_running {
             app.logs.push(
-                "⚠️ No active personas detected. Configure provider/model in maestro/config.toml and restart."
+                "⚠️ Maestro persona is not active. Ensure startup checks pass and restart interview."
                     .to_string(),
             );
             return false;
@@ -1982,13 +2177,17 @@ async fn run_maestro_wakeup_check(
     app.maestro_message_id = Some(probe.id());
     let _ = env.publish(probe).await;
 
-    for _ in 0..8 {
-        tokio::time::sleep(Duration::from_millis(150)).await;
+    const WAKEUP_RETRIES: usize = 20;
+    const WAKEUP_WAIT_MS: u64 = 250;
+
+    for _ in 0..WAKEUP_RETRIES {
+        tokio::time::sleep(Duration::from_millis(WAKEUP_WAIT_MS)).await;
         let history = env.get_history().await;
-        let answered = history.iter().rev().take(20).any(|msg| {
-            let sender = msg.sender().to_ascii_lowercase();
-            sender != "user" && sender != "system"
-        });
+        let answered = history
+            .iter()
+            .rev()
+            .take(40)
+            .any(|msg| msg.sender().eq_ignore_ascii_case("maestro"));
 
         if answered {
             app.logs
@@ -1998,7 +2197,7 @@ async fn run_maestro_wakeup_check(
     }
 
     app.logs.push(
-        "⚠️ Maestro did not answer wake-up check. Configure provider/model in maestro/config.toml and restart interview."
+        "⚠️ Maestro did not answer wake-up check. Configure provider/model in maestro/config.yaml and restart interview."
             .to_string(),
     );
     app.maestro_message_id = None;
@@ -2058,6 +2257,14 @@ mod tests {
                 has_scopes: true,
                 has_personas: true,
                 has_skills: true,
+            },
+            dependency_domains: DependencyDomainsState {
+                project_manifest_found: true,
+                project_manifest_valid: true,
+                project_required_checks_passed: true,
+                project_failed_required: vec![],
+                project_failed_required_hints: vec![],
+                project_error: None,
             },
             focus: PanelFocus::Workspace,
             readiness_selected_action: 0,
@@ -2150,6 +2357,14 @@ mod tests {
                 has_personas: false,
                 has_skills: false,
             },
+            dependency_domains: DependencyDomainsState {
+                project_manifest_found: false,
+                project_manifest_valid: false,
+                project_required_checks_passed: false,
+                project_failed_required: vec![],
+                project_failed_required_hints: vec![],
+                project_error: Some("maestro/project-deps.yaml not found".to_string()),
+            },
             ..TuiApp::default()
         };
 
@@ -2187,6 +2402,14 @@ mod tests {
                 has_personas: false,
                 has_skills: true,
             },
+            dependency_domains: DependencyDomainsState {
+                project_manifest_found: true,
+                project_manifest_valid: true,
+                project_required_checks_passed: true,
+                project_failed_required: vec![],
+                project_failed_required_hints: vec![],
+                project_error: None,
+            },
             focus: PanelFocus::Readiness,
             ..TuiApp::default()
         };
@@ -2216,6 +2439,14 @@ mod tests {
                 has_personas: false,
                 has_skills: true,
             },
+            dependency_domains: DependencyDomainsState {
+                project_manifest_found: true,
+                project_manifest_valid: true,
+                project_required_checks_passed: true,
+                project_failed_required: vec![],
+                project_failed_required_hints: vec![],
+                project_error: None,
+            },
             focus: PanelFocus::Readiness,
             ..TuiApp::default()
         };
@@ -2239,6 +2470,43 @@ mod tests {
             action2,
             Some(UserAction::RunReadinessAction(
                 ReadinessAction::CreatePersona
+            ))
+        ));
+    }
+
+    #[test]
+    fn readiness_focus_selects_project_dependency_remediation_action() {
+        let mut app = TuiApp {
+            readiness: crate::application::readiness::ReadinessState {
+                items: vec![],
+                has_config: true,
+                config_valid: true,
+                has_providers: true,
+                provider_reachable: true,
+                has_scopes: true,
+                has_personas: true,
+                has_skills: true,
+            },
+            dependency_domains: DependencyDomainsState {
+                project_manifest_found: true,
+                project_manifest_valid: true,
+                project_required_checks_passed: false,
+                project_failed_required: vec!["git".to_string()],
+                project_failed_required_hints: vec![(
+                    "git".to_string(),
+                    Some("Install Git and ensure it is available in PATH.".to_string()),
+                )],
+                project_error: None,
+            },
+            focus: PanelFocus::Readiness,
+            ..TuiApp::default()
+        };
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert!(matches!(
+            action,
+            Some(UserAction::RunReadinessAction(
+                ReadinessAction::RemediateProjectDependency { .. }
             ))
         ));
     }

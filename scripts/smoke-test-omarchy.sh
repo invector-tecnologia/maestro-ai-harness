@@ -31,12 +31,12 @@ maestro --help >/dev/null
 maestro list-agents >/dev/null
 
 echo "[3/6] Verifying config and dirs"
-test -f /etc/maestro/config.toml
+test -f /etc/maestro/config.yaml
 test -d /var/lib/maestro
 test -d /var/log/maestro
 
 echo "[4/6] Running doctor"
-maestro doctor --config /etc/maestro/config.toml >/dev/null
+maestro doctor --config /etc/maestro/config.yaml >/dev/null
 
 echo "[5/6] Removing package"
 sudo pacman -R --noconfirm maestro-ai

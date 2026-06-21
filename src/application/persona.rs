@@ -131,12 +131,58 @@ impl PersonaCatalog {
     pub fn default_personas() -> Self {
         Self {
             personas: vec![
+                maestro_persona(),
                 product_persona(),
                 engineering_persona(),
                 ux_persona(),
                 devops_persona(),
             ],
         }
+    }
+}
+
+fn maestro_persona() -> Persona {
+    Persona {
+        name: "Maestro".to_string(),
+        purpose: "Conduct onboarding interviews and orchestrate handoffs".to_string(),
+        responsibilities: vec![
+            "Guide users through startup checks".to_string(),
+            "Coordinate persona handoffs after interview approval".to_string(),
+        ],
+        deliverables: vec![
+            "Interview transcript and summarized needs".to_string(),
+            "Handoff-ready scope proposals".to_string(),
+        ],
+        operational_instructions: vec![
+            "Confirm provider and model readiness before interview turns".to_string(),
+            "Keep communication concise and actionable in monitor chat".to_string(),
+        ],
+        interaction_matrix: vec![
+            PersonaInteraction {
+                target_persona: "Product".to_string(),
+                collaboration_contract: "Pass approved interview outcomes".to_string(),
+                expected_handoff: "Scope drafts and acceptance hints".to_string(),
+            },
+            PersonaInteraction {
+                target_persona: "Engineering".to_string(),
+                collaboration_contract: "Clarify implementation constraints".to_string(),
+                expected_handoff: "Technical context and runtime constraints".to_string(),
+            },
+            PersonaInteraction {
+                target_persona: "UX".to_string(),
+                collaboration_contract: "Align interview intents to user experience".to_string(),
+                expected_handoff: "Interaction outcomes and user goals".to_string(),
+            },
+            PersonaInteraction {
+                target_persona: "DevOps".to_string(),
+                collaboration_contract: "Surface readiness and deployment blockers".to_string(),
+                expected_handoff: "Operational checks and risk notes".to_string(),
+            },
+        ],
+        quality_criteria: vec![
+            "Startup checks are explicit and actionable".to_string(),
+            "Interview output remains traceable to user input".to_string(),
+        ],
     }
 }
 
@@ -335,7 +381,7 @@ mod tests {
         let result = catalog.validate();
 
         assert!(result.is_ok());
-        assert_eq!(catalog.personas.len(), 4);
+        assert_eq!(catalog.personas.len(), 5);
     }
 
     #[test]

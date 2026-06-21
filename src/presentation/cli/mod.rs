@@ -11,7 +11,13 @@ use crate::application::config::ConfigLoader;
 use crate::application::environment::Environment;
 use crate::application::markdown_governance::MarkdownGovernance;
 use crate::application::persona::PersonaCatalog;
-use crate::application::persona_operations::registrations_from_default_personas;
+use crate::application::persona_operations::{
+    registrations_from_default_personas, registrations_from_selected_personas,
+};
+use crate::application::project_deps::{
+    ProjectDependencyCheck, ProjectDepsCheckReport, ProjectDepsConfig,
+    DEFAULT_PROJECT_DEPS_TEMPLATE,
+};
 use crate::application::rag::RagService;
 use crate::domain::ports::rag::RagEmbedder;
 use crate::infrastructure::llm::gemini_adapter::GeminiAdapter;
@@ -68,10 +74,33 @@ pub enum Commands {
         no_tui: bool,
     },
     Logout,
+    Deps {
+        #[command(subcommand)]
+        command: DepsCommands,
+    },
     Rag {
         #[command(subcommand)]
         command: RagCommands,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DepsCommands {
+    Check {
+        #[arg(long, value_enum, default_value_t = DepsScope::All)]
+        scope: DepsScope,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        deps_file: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DepsScope {
+    Harness,
+    Project,
+    All,
 }
 
 #[derive(Debug, Subcommand)]
@@ -105,6 +134,10 @@ pub enum CliOutcome {
     ConfigInitialized,
     ProjectInitialized,
     LogoutCompleted,
+    DepsChecked {
+        harness_ready: bool,
+        project_ready: bool,
+    },
     RagIngested {
         documents: usize,
         chunks: usize,
@@ -197,6 +230,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             scaffold_scope(&governance)?;
             scaffold_personas(&governance)?;
             scaffold_skills(&governance)?;
+            scaffold_project_deps(&root)?;
 
             info!("Markdown scaffold completed");
             Ok(CliOutcome::ScaffoldDone)
@@ -244,6 +278,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             scaffold_scope(&governance)?;
             scaffold_personas(&governance)?;
             scaffold_skills(&governance)?;
+            scaffold_project_deps(&root)?;
 
             info!("Project {} initialized", project_name);
 
@@ -273,6 +308,31 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             println!("✅ Logout completed successfully.");
             Ok(CliOutcome::LogoutCompleted)
         }
+        Commands::Deps { command } => match command {
+            DepsCommands::Check {
+                scope,
+                config,
+                deps_file,
+            } => {
+                let mut harness_ready = true;
+                let mut project_ready = true;
+
+                if matches!(scope, DepsScope::Harness | DepsScope::All) {
+                    harness_ready = check_harness_dependencies(config.as_ref())?;
+                }
+
+                if matches!(scope, DepsScope::Project | DepsScope::All) {
+                    let report = check_project_dependencies(deps_file)?;
+                    project_ready = report.all_required_passed();
+                    print_project_dependency_report(&report);
+                }
+
+                Ok(CliOutcome::DepsChecked {
+                    harness_ready,
+                    project_ready,
+                })
+            }
+        },
         Commands::Rag { command } => {
             let root = std::env::current_dir()?;
             let local_index = Arc::new(LocalHybridIndex::new(&root));
@@ -352,6 +412,85 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
     }
 }
 
+fn check_harness_dependencies(config: Option<&PathBuf>) -> Result<bool> {
+    let cfg = ConfigLoader::load(config.cloned())?;
+    let mut registry = ProviderRegistry::new();
+    registry.register_builtin_providers()?;
+    let _ = registry.resolve_default(&cfg)?;
+
+    let root = std::env::current_dir()?;
+    let readiness = crate::application::readiness::run_checks(&root);
+
+    let failed = readiness
+        .items
+        .iter()
+        .filter(|item| !item.passed)
+        .collect::<Vec<_>>();
+
+    if failed.is_empty() {
+        println!("Harness dependencies: ✅ ready");
+        return Ok(true);
+    }
+
+    println!("Harness dependencies: ❌ not ready");
+    for item in failed {
+        println!("  - {}", item.name);
+        println!("    {}", item.dummy_guide);
+    }
+
+    Ok(false)
+}
+
+fn check_project_dependencies(deps_file: Option<PathBuf>) -> Result<ProjectDepsCheckReport> {
+    let config = ProjectDepsConfig::load(deps_file)?;
+    let mut checks = Vec::new();
+
+    for dep in config.dependencies {
+        let status = std::process::Command::new("sh")
+            .arg("-lc")
+            .arg(&dep.check_command)
+            .status();
+
+        let passed = match status {
+            Ok(exit) => exit.success(),
+            Err(_) => false,
+        };
+
+        checks.push(ProjectDependencyCheck {
+            name: dep.name,
+            passed,
+            required: dep.required,
+            install_hint: dep.install_hint,
+        });
+    }
+
+    Ok(ProjectDepsCheckReport { checks })
+}
+
+fn print_project_dependency_report(report: &ProjectDepsCheckReport) {
+    println!("Project dependencies:");
+    for check in &report.checks {
+        let status = if check.passed { "✅" } else { "❌" };
+        let required = if check.required {
+            "required"
+        } else {
+            "optional"
+        };
+        println!("  {} {} ({})", status, check.name, required);
+        if !check.passed {
+            if let Some(hint) = &check.install_hint {
+                println!("     {}", hint);
+            }
+        }
+    }
+
+    if report.all_required_passed() {
+        println!("Project dependencies: ✅ required checks passed");
+    } else {
+        println!("Project dependencies: ❌ required checks failed");
+    }
+}
+
 async fn run_tui_with_runtime(
     config: Option<PathBuf>,
     bootstrap: OnboardingBootstrap,
@@ -374,14 +513,44 @@ async fn run_tui_with_runtime(
 
             match registry.resolve_default(&cfg) {
                 Ok(resolved) => {
+                    if let Err(error) = probe_active_default_model(
+                        resolved.provider.as_ref(),
+                        &resolved.provider_name,
+                        &resolved.model,
+                    )
+                    .await
+                    {
+                        let _ = environment
+                            .publish(crate::domain::models::message::Message::new(
+                                "system".to_string(),
+                                format!("⚠️ Startup check failed (active model): {error}"),
+                                None,
+                            ))
+                            .await;
+                        let tui_result =
+                            run_tui(Some(Arc::clone(&environment)), runtime.clone(), bootstrap)
+                                .await;
+                        if let Some(rt) = runtime {
+                            let _ = rt.stop_all().await;
+                        }
+                        tui_result?;
+                        return Ok(());
+                    }
+
                     let rt = Arc::new(AgentRuntime::new(Arc::clone(&environment)));
-                    match registrations_from_default_personas(resolved.provider) {
+                    let registrations = if matches!(bootstrap, OnboardingBootstrap::InitInterview) {
+                        registrations_from_selected_personas(resolved.provider, &["Maestro"])
+                    } else {
+                        registrations_from_default_personas(resolved.provider)
+                    };
+
+                    match registrations {
                         Ok(registrations) => {
                             if let Err(error) = rt.start_agents(registrations).await {
                                 let _ = environment
                                     .publish(crate::domain::models::message::Message::new(
                                         "system".to_string(),
-                                        format!("⚠️ Failed to start default personas: {error}"),
+                                        format!("⚠️ Failed to start runtime personas: {error}"),
                                         None,
                                     ))
                                     .await;
@@ -430,6 +599,32 @@ async fn run_tui_with_runtime(
     Ok(())
 }
 
+async fn probe_active_default_model(
+    provider: &dyn crate::domain::ports::llm_provider::LlmProvider,
+    provider_name: &str,
+    model_name: &str,
+) -> Result<()> {
+    let probe_prompt = "Reply with the single word: awake";
+    let response = provider.text_only(probe_prompt).await.map_err(|error| {
+        anyhow::anyhow!(
+            "provider '{}' model '{}' did not answer probe: {}",
+            provider_name,
+            model_name,
+            error
+        )
+    })?;
+
+    if response.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "provider '{}' model '{}' returned an empty probe response",
+            provider_name,
+            model_name
+        ));
+    }
+
+    Ok(())
+}
+
 async fn build_rag_embedder() -> Option<Arc<dyn RagEmbedder>> {
     let config = match ConfigLoader::load(None) {
         Ok(cfg) => cfg,
@@ -474,7 +669,7 @@ fn scaffold_scope(governance: &MarkdownGovernance) -> Result<()> {
 }
 
 fn scaffold_personas(governance: &MarkdownGovernance) -> Result<()> {
-    let personas = ["product", "engineering", "ux", "devops"];
+    let personas = ["maestro", "product", "engineering", "ux", "devops"];
     for persona in personas {
         let file = governance.personas_dir().join(format!("{persona}.md"));
         if !file.exists() {
@@ -488,7 +683,7 @@ fn scaffold_personas(governance: &MarkdownGovernance) -> Result<()> {
 }
 
 fn scaffold_skills(governance: &MarkdownGovernance) -> Result<()> {
-    let personas = ["product", "engineering", "ux", "devops"];
+    let personas = ["maestro", "product", "engineering", "ux", "devops"];
     for persona in personas {
         let dir = governance.skills_dir().join(persona);
         fs::create_dir_all(&dir)?;
@@ -503,10 +698,25 @@ fn scaffold_skills(governance: &MarkdownGovernance) -> Result<()> {
     Ok(())
 }
 
+fn scaffold_project_deps(root: &std::path::Path) -> Result<()> {
+    let path = root.join("maestro").join("project-deps.yaml");
+    if !path.exists() {
+        std::fs::write(path, DEFAULT_PROJECT_DEPS_TEMPLATE)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use super::*;
     use uuid::Uuid;
+
+    fn cwd_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn unique_path() -> PathBuf {
         std::env::temp_dir().join(format!("maestro-cli-{}.toml", Uuid::new_v4()))
@@ -587,12 +797,25 @@ mod tests {
         assert!(matches!(
             outcome,
             Ok(CliOutcome::AgentsListed(names))
-            if names == vec!["DevOps", "Engineering", "Product", "UX"]
+            if names == vec!["DevOps", "Engineering", "Maestro", "Product", "UX"]
         ));
     }
 
-    #[tokio::test]
-    async fn executes_doctor_and_scaffold_markdown_commands() {
+    #[test]
+    fn executes_doctor_and_scaffold_markdown_commands() {
+        let lock = cwd_lock();
+        let guard = lock.lock();
+        assert!(guard.is_ok());
+        let _guard = guard.unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        assert!(runtime.is_ok());
+        let runtime = runtime.unwrap_or_else(|error| {
+            panic!("failed to build tokio runtime for test: {}", error);
+        });
+
         let config_path = unique_path();
         write_valid_config(&config_path);
 
@@ -607,18 +830,16 @@ mod tests {
         let change = std::env::set_current_dir(&root);
         assert!(change.is_ok());
 
-        let doctor = execute(Cli {
+        let doctor = runtime.block_on(execute(Cli {
             command: Some(Commands::Doctor {
                 config: Some(config_path.clone()),
             }),
-        })
-        .await;
+        }));
         assert!(matches!(doctor, Ok(CliOutcome::DoctorOk)));
 
-        let scaffold = execute(Cli {
+        let scaffold = runtime.block_on(execute(Cli {
             command: Some(Commands::ScaffoldMarkdown),
-        })
-        .await;
+        }));
         assert!(matches!(scaffold, Ok(CliOutcome::ScaffoldDone)));
 
         assert!(root.join("maestro").join("scopes").exists());
@@ -664,6 +885,67 @@ mod tests {
     fn parses_logout_command() {
         let cli = Cli::parse_from(["maestro", "logout"]);
         assert!(matches!(cli.command, Some(Commands::Logout)));
+    }
+
+    #[test]
+    fn parses_deps_check_command() {
+        let cli = Cli::parse_from(["maestro", "deps", "check", "--scope", "project"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Deps {
+                command: DepsCommands::Check {
+                    scope: DepsScope::Project,
+                    ..
+                }
+            })
+        ));
+    }
+
+    #[test]
+    fn executes_deps_check_project_command() {
+        let lock = cwd_lock();
+        let guard = lock.lock();
+        assert!(guard.is_ok());
+        let _guard = guard.unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        assert!(runtime.is_ok());
+        let runtime = runtime.unwrap_or_else(|error| {
+            panic!("failed to build tokio runtime for test: {}", error);
+        });
+
+        let root = std::env::temp_dir().join(format!("maestro-deps-{}", Uuid::new_v4()));
+        assert!(std::fs::create_dir_all(root.join("maestro")).is_ok());
+
+        let deps_path = root.join("maestro").join("project-deps.yaml");
+        let content = "dependencies:\n  - name: shell\n    check_command: \"command -v sh >/dev/null 2>&1\"\n    required: true\n";
+        assert!(std::fs::write(&deps_path, content).is_ok());
+
+        let old = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        assert!(std::env::set_current_dir(&root).is_ok());
+
+        let outcome = runtime.block_on(execute(Cli {
+            command: Some(Commands::Deps {
+                command: DepsCommands::Check {
+                    scope: DepsScope::Project,
+                    config: None,
+                    deps_file: None,
+                },
+            }),
+        }));
+
+        assert!(matches!(
+            outcome,
+            Ok(CliOutcome::DepsChecked {
+                harness_ready: true,
+                project_ready: true
+            })
+        ));
+
+        let _ = std::env::set_current_dir(old);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

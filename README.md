@@ -21,6 +21,20 @@ Built with **Rust** (making it incredibly fast and safe), it offers a "TUI" (Ter
 * **AI Harness & Governance:** Automatically organizes the rules of your project, defining *Personas* (AI profiles), *Scopes* (what needs to be done), and *Skills* (AI tools), while ensuring they run safely in a controlled environment.
 * **Secure Login:** Allows you to log into your Google (Gemini) account directly via your web browser, saving credentials securely in your OS keychain.
 
+### Dependency Domains (Important)
+Maestro now separates dependencies into two domains:
+
+1. Harness dependencies (Maestro runtime): provider config, default model availability, and core runtime readiness.
+2. Project dependencies (AI companion for your repo): toolchain and command checks defined in `maestro/project-deps.yaml`.
+
+Use dependency checks explicitly:
+
+```bash
+maestro deps check --scope harness
+maestro deps check --scope project
+maestro deps check --scope all
+```
+
 ---
 
 ## 🚀 Installation Steps (Bringing Maestro to your machine)
@@ -73,25 +87,33 @@ sudo pacman -U --noconfirm target/omarchy/build/maestro-ai-0.1.0-1-$(uname -m).p
 
 ## ⚙️ Setting Up the Office (Configuration)
 
-All governance, TUI state, and project configurations are now isolated locally inside a `maestro/` folder in your project directory. Maestro looks first for `./maestro/config.toml` and, if not found, falls back to the global system config path.
+All governance, TUI state, and project configurations are now isolated locally inside a `maestro/` folder in your project directory. Maestro looks first for `./maestro/config.yaml` and, if not found, falls back to the global system config path.
 
-In this file, you define the rules of the game. A minimal configuration example to use local code models (like `deepseek-coder-v2`) via Ollama:
+In this file, you define the rules of the game. A minimal configuration example to use local models via Ollama:
 
-```toml
-[[providers]]
-name = "ollama"
-endpoint = "http://127.0.0.1:11434/v1"
-auth_mode = "none"
-timeout_ms = 10000
-models = ["deepseek-coder-v2"]
+```yaml
+system:
+  default_provider: "ollama"
+  default_model: "mistral"
+  max_concurrency: 4
+  rate_limit_per_minute: 120
+  retry_max_attempts: 3
 
-[runtime]
-retry_max_attempts = 3
-max_concurrency = 4
-rate_limit_per_minute = 120
-default_provider = "ollama"
-default_model = "deepseek-coder-v2"
-
+providers:
+  ollama:
+    kind: "ollama"
+    endpoint: "http://127.0.0.1:11434"
+    auth_mode: "none"
+    timeout_ms: 60000
+    models:
+      - name: "mistral"
+        context_window: 32000
+    capabilities:
+      supports_tools: false
+      supports_streaming: true
+      supports_json_mode: false
+      supports_reasoning_controls: false
+      max_context_tokens: 32000
 ```
 
 (Note: If you need Bearer token authentication, just adjust the `auth_mode` parameters and export the corresponding environment variable before starting Maestro).
@@ -102,7 +124,7 @@ default_model = "deepseek-coder-v2"
 
 The recommended workflow to start your workday and orchestrate activities is the following:
 
-1. **Initialize the project:** Run `maestro init <project-name>` to create the project folder, generate default config (`maestro/config.toml`), and initial mandatory folders. The command opens the onboarding interview mode by default.
+1. **Initialize the project:** Run `maestro init <project-name>` to create the project folder, generate default config (`maestro/config.yaml`), and initial mandatory folders. The command opens the onboarding interview mode by default.
 2. **Optional automation mode:** Use `maestro init <project-name> --no-tui` when you need non-interactive setup for scripts or CI.
 3. **Validate the terrain:** Run `maestro validate-config` to ensure your settings and file dependencies are correct.
 4. **Open the panel:** Type `maestro tui` to access your interactive dashboard.
@@ -112,8 +134,9 @@ The recommended workflow to start your workday and orchestrate activities is the
 ### Other Useful Terminal Commands (CLI)
 
 * **`maestro doctor`:** Performs a quick check-up to see if your environment structure and mandatory markdowns are healthy.
-* **`maestro init-config`:** Generates only the default config file (`maestro/config.toml`) in the current directory.
+* **`maestro init-config`:** Generates only the default config file (`maestro/config.yaml`) in the current directory.
 * **`maestro scaffold-markdown`:** Generates only the initial Markdown folders and files in the current directory.
+* **`maestro deps check --scope <harness|project|all>`:** Validates dependency domains independently.
 * **`maestro list-agents`:** Displays the list of all personas registered in your current catalog.
 * **`maestro onboarding --mode fast`:** Starts onboarding with safe defaults and the shortest path to a working setup.
 * **`maestro onboarding --mode detailed`:** Starts the guided interview with more controls and setup questions.

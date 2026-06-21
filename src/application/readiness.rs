@@ -100,7 +100,7 @@ pub fn run_checks(root: &Path) -> ReadinessState {
                     name: "Configuration Content".to_string(),
                     passed: false,
                     dummy_guide: format!(
-                        "How-To: Fix the following error in your config.toml: {}",
+                        "How-To: Fix the following error in your config.yaml: {}",
                         e
                     ),
                 });
@@ -260,44 +260,99 @@ pub fn skills_has_markdown(skills_dir: &Path) -> bool {
 }
 
 /// Auto-bootstrap configuration if missing.
-/// Creates maestro/config.toml with detected provider endpoints.
+/// Creates maestro/config.yaml with detected provider endpoints.
 pub fn auto_bootstrap_config(root: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     let maestro_dir = root.join("maestro");
     std::fs::create_dir_all(&maestro_dir)?;
 
-    let config_path = maestro_dir.join("config.toml");
+    let config_path = maestro_dir.join("config.yaml");
     if config_path.exists() {
-        return Ok(false); // Already exists, no bootstrap needed
+        // Never overwrite a user-owned config. If invalid, provide an actionable error.
+        if ConfigLoader::load(Some(config_path.clone())).is_ok() {
+            return Ok(false);
+        }
+
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "existing config is invalid at '{}'; fix or remove it and retry",
+                config_path.display()
+            ),
+        )));
     }
 
     // Try to detect local Ollama
-    let ollama_endpoint = "http://127.0.0.1:11434/v1";
+    let ollama_endpoint = "http://127.0.0.1:11434";
     let ollama_reachable = endpoint_is_reachable(ollama_endpoint);
 
     let config_content = if ollama_reachable {
         format!(
-            r#"[[providers]]
-name = "ollama"
-endpoint = "{}"
-auth_mode = "none"
-timeout_ms = 10000
-models = ["deepseek-coder-v2"]
-max_context_chars = 128000
-
-[runtime]
-retry_max_attempts = 3
-max_concurrency = 4
-rate_limit_per_minute = 120
-default_provider = "ollama"
-default_model = "deepseek-coder-v2"
-"#,
+            "system:\n  default_provider: \"ollama\"\n  default_model: \"mistral\"\n  max_concurrency: 4\n  rate_limit_per_minute: 120\n  retry_max_attempts: 3\n\nproviders:\n  ollama:\n    kind: \"ollama\"\n    endpoint: \"{}\"\n    auth_mode: \"none\"\n    timeout_ms: 60000\n    models:\n      - name: \"mistral\"\n        context_window: 32000\n    capabilities:\n      supports_tools: false\n      supports_streaming: true\n      supports_json_mode: false\n      supports_reasoning_controls: false\n      max_context_tokens: 32000\n",
             ollama_endpoint
         )
     } else {
-        // Default config with Ollama placeholder
+        // Fallback to the canonical YAML template.
         crate::application::config::DEFAULT_CONFIG_TEMPLATE.to_string()
     };
 
     std::fs::write(&config_path, config_content)?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_root(prefix: &str) -> PathBuf {
+        let unique = format!(
+            "{}-{}-{}",
+            prefix,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    #[test]
+    fn auto_bootstrap_creates_valid_yaml_config() {
+        let root = temp_root("maestro-readiness-bootstrap");
+        let created = std::fs::create_dir_all(&root);
+        assert!(created.is_ok());
+
+        let bootstrapped = auto_bootstrap_config(&root);
+        assert!(matches!(bootstrapped, Ok(true)));
+
+        let config_path = root.join("maestro").join("config.yaml");
+        assert!(config_path.exists());
+        let loaded = ConfigLoader::load(Some(config_path));
+        assert!(loaded.is_ok());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_bootstrap_does_not_overwrite_existing_valid_config() {
+        let root = temp_root("maestro-readiness-existing-config");
+        let maestro_dir = root.join("maestro");
+        let created = std::fs::create_dir_all(&maestro_dir);
+        assert!(created.is_ok());
+
+        let config_path = maestro_dir.join("config.yaml");
+        let wrote = std::fs::write(
+            &config_path,
+            crate::application::config::DEFAULT_CONFIG_TEMPLATE,
+        );
+        assert!(wrote.is_ok());
+
+        let first = auto_bootstrap_config(&root);
+        assert!(matches!(first, Ok(false)));
+
+        let loaded = ConfigLoader::load(Some(config_path));
+        assert!(loaded.is_ok());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

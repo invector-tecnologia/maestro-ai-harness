@@ -11,7 +11,7 @@ depends=('glibc')
 options=(!lto)
 source=("${pkgname}-${pkgver}.tar.gz")
 sha256sums=('SKIP')
-backup=('etc/maestro/config.toml')
+backup=('etc/maestro/config.yaml')
 
 build() {
   cd "${srcdir}/${pkgname}-${pkgver}"
@@ -23,7 +23,7 @@ package() {
 
   install -Dm755 target/release/maestro "${pkgdir}/usr/bin/maestro"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-  install -Dm644 packaging/omarchy/config.toml "${pkgdir}/etc/maestro/config.toml"
+  install -Dm644 packaging/omarchy/config.yaml "${pkgdir}/etc/maestro/config.yaml"
 
   install -dm755 "${pkgdir}/var/lib/maestro"
   install -dm755 "${pkgdir}/var/log/maestro"

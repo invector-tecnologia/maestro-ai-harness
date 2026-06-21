@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -14,6 +15,8 @@ use crate::domain::ports::role::{Role, RoleError};
 pub enum PersonaOperationsError {
     #[error("Invalid persona catalog: {0}")]
     InvalidPersonaCatalog(#[from] PersonaError),
+    #[error("Persona not found in catalog: {0}")]
+    PersonaNotFound(String),
 }
 
 #[derive(Default)]
@@ -161,6 +164,38 @@ pub fn registrations_from_default_personas(
     Ok(registrations)
 }
 
+pub fn registrations_from_selected_personas(
+    llm_provider: Arc<dyn LlmProvider>,
+    selected_names: &[&str],
+) -> Result<Vec<AgentRegistration>, PersonaOperationsError> {
+    let catalog = PersonaCatalog::default_personas();
+    catalog.validate()?;
+
+    let selected = selected_names
+        .iter()
+        .map(|name| name.trim().to_string())
+        .collect::<HashSet<_>>();
+
+    for name in &selected {
+        let exists = catalog.personas.iter().any(|persona| persona.name == *name);
+        if !exists {
+            return Err(PersonaOperationsError::PersonaNotFound(name.clone()));
+        }
+    }
+
+    let registrations = catalog
+        .personas
+        .into_iter()
+        .filter(|persona| selected.contains(&persona.name))
+        .map(|persona| AgentRegistration {
+            name: persona.name.clone(),
+            role: Arc::new(PersonaRuntimeRole::new(persona, Arc::clone(&llm_provider))),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(registrations)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -173,7 +208,7 @@ mod tests {
     use super::*;
 
     async fn wait_until_default_personas_ready(runtime: &AgentRuntime) -> bool {
-        let expected = ["Product", "Engineering", "UX", "DevOps"];
+        let expected = ["Maestro", "Product", "Engineering", "UX", "DevOps"];
 
         for _ in 0..80 {
             let snapshot = runtime.health_snapshot().await;
@@ -266,12 +301,14 @@ mod tests {
             .collect::<HashSet<_>>();
 
         assert!(senders.contains("user"));
+        assert!(senders.contains("Maestro"));
         assert!(senders.contains("Product"));
         assert!(senders.contains("Engineering"));
         assert!(senders.contains("UX"));
         assert!(senders.contains("DevOps"));
 
         let health = runtime.health_snapshot().await;
+        assert!(!matches!(health.get("Maestro"), Some(AgentHealth::Failed)));
         assert!(!matches!(health.get("Product"), Some(AgentHealth::Failed)));
         assert!(!matches!(
             health.get("Engineering"),
@@ -282,5 +319,16 @@ mod tests {
 
         let stopped = runtime.stop_all().await;
         assert!(stopped.is_ok());
+    }
+
+    #[test]
+    fn selected_persona_registration_returns_only_requested_persona() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(DummyLlmProvider);
+        let registrations = registrations_from_selected_personas(provider, &["Maestro"]);
+        assert!(registrations.is_ok());
+
+        let registrations = registrations.unwrap_or_default();
+        assert_eq!(registrations.len(), 1);
+        assert_eq!(registrations[0].name, "Maestro");
     }
 }

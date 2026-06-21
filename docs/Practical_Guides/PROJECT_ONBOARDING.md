@@ -17,12 +17,12 @@ maestro init my-project --no-tui
 
 ## How To Start Directly
 ```bash
-maestro onboarding --mode detailed --config ~/.config/maestro/config.toml
+maestro onboarding --mode detailed --config ~/.config/maestro/config.yaml
 ```
 
 For a quicker path with safe defaults:
 ```bash
-maestro onboarding --mode fast --config ~/.config/maestro/config.toml
+maestro onboarding --mode fast --config ~/.config/maestro/config.yaml
 ```
 
 ## Guided Flow
@@ -49,8 +49,8 @@ After completion, the project has initial artifacts in:
 ## Recommended Commands After Completion
 ```bash
 maestro list-agents
-maestro doctor --config ~/.config/maestro/config.toml
-maestro run --config ~/.config/maestro/config.toml --duration-ms 500
+maestro doctor --config ~/.config/maestro/config.yaml
+maestro run --config ~/.config/maestro/config.yaml --duration-ms 500
 ```
 
 ## Troubleshooting

@@ -6,5 +6,6 @@ pub mod interview_bot;
 pub mod markdown_governance;
 pub mod persona;
 pub mod persona_operations;
+pub mod project_deps;
 pub mod rag;
 pub mod readiness;

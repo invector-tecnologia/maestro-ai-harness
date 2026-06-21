@@ -10,7 +10,7 @@
 - `maestro list-agents`: Lists registered default personas.
 - `maestro doctor [--config <path>]`: Checks environment, config, and governance structure.
 - `maestro scaffold-markdown`: Creates initial markdown governance artifacts.
-- `maestro init-config`: Generates local config template in `./maestro/config.toml`.
+- `maestro init-config`: Generates local config template in `./maestro/config.yaml`.
 - `maestro init <project-name> [--no-tui]`: Bootstraps a new project with governance folders and config, then opens onboarding interview mode by default.
 - `maestro init <project-name> --no-tui`: Bootstraps and exits without opening the TUI (recommended for scripts/CI).
 - `maestro logout`: Clears provider credentials from local secure storage.
