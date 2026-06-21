@@ -97,6 +97,7 @@ pub struct TuiApp {
     #[allow(dead_code)]
     maestro_message_id: Option<Uuid>,
     approval_modal_visible: bool,
+    last_runtime_event_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -355,6 +356,10 @@ impl TuiApp {
     }
 
     pub fn update_logs_from_history(&mut self, history: &[Message]) {
+        if history.is_empty() {
+            return;
+        }
+
         let mut lines = history
             .iter()
             .map(|msg| format!("{}: {}", msg.sender(), msg.content()))
@@ -372,9 +377,13 @@ impl TuiApp {
         &mut self,
         events: &[crate::application::agent_observability::RuntimeEventWithTimestamp],
     ) {
+        if events.len() <= self.last_runtime_event_count {
+            return;
+        }
+
         use crate::application::agent_observability::RuntimeEvent;
 
-        let lines = events
+        let new_lines = events[self.last_runtime_event_count..]
             .iter()
             .map(|evt| {
                 let evt_desc = match &evt.event {
@@ -430,14 +439,13 @@ impl TuiApp {
             })
             .collect::<Vec<_>>();
 
-        // Keep only last 100 lines
-        let keep_lines = if lines.len() > 100 {
-            lines.split_at(lines.len() - 100).1.to_vec()
-        } else {
-            lines
-        };
+        self.last_runtime_event_count = events.len();
+        self.logs.extend(new_lines);
 
-        self.logs = keep_lines;
+        // Keep only last 100 lines
+        if self.logs.len() > 100 {
+            self.logs = self.logs.split_off(self.logs.len() - 100);
+        }
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> Option<UserAction> {
@@ -846,8 +854,16 @@ pub async fn run_tui(
                         match app.handle_key_event(key) {
                             Some(UserAction::Quit) => break,
                             Some(UserAction::SubmitCommand(command)) => {
-                                let message = Message::new("user".to_string(), command, None);
-                                if let Some(env) = &environment { let _ = env.publish(message).await; }
+                                let message = Message::new("user".to_string(), command.clone(), None);
+                                app.logs.push(format!("you: {}", command));
+                                if let Some(env) = &environment {
+                                    let _ = env.publish(message).await;
+                                } else {
+                                    app.logs.push(
+                                        "⚠️ No active environment. Configure provider/model and restart Maestro."
+                                            .to_string(),
+                                    );
+                                }
                             }
                             #[allow(clippy::collapsible_match)]
                             Some(UserAction::CompleteWizard(submission)) => {
@@ -2054,6 +2070,7 @@ mod tests {
             interview_bot: None,
             maestro_message_id: None,
             approval_modal_visible: false,
+            last_runtime_event_count: 0,
         };
 
         let drawn = terminal.draw(|frame| render(frame, &app));

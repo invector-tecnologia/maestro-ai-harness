@@ -208,7 +208,14 @@ async fn run_agent_loop(
                             event_tx.clone(),
                         ).await;
 
-                        if processed.is_err() {
+                        if let Err(error) = processed {
+                            publish_runtime_error(
+                                Arc::clone(&environment),
+                                event_tx.clone(),
+                                &agent_name,
+                                format!("agent cycle failed: {error}"),
+                            )
+                            .await;
                             set_health(&health, &agent_name, AgentHealth::Failed).await;
                             break;
                         }
@@ -244,7 +251,16 @@ async fn process_message_cycle(
         timestamp: std::time::SystemTime::now(),
     });
 
-    role.observe(std::slice::from_ref(&message)).await?;
+    if let Err(error) = role.observe(std::slice::from_ref(&message)).await {
+        publish_runtime_error(
+            Arc::clone(&environment),
+            event_tx.clone(),
+            agent_name,
+            format!("observe failed: {error}"),
+        )
+        .await;
+        return Err(error);
+    }
 
     set_health(&health, agent_name, AgentHealth::Thinking).await;
     let think_event = RuntimeEvent::AgentThinking {
@@ -256,7 +272,16 @@ async fn process_message_cycle(
         timestamp: std::time::SystemTime::now(),
     });
 
-    role.think().await?;
+    if let Err(error) = role.think().await {
+        publish_runtime_error(
+            Arc::clone(&environment),
+            event_tx.clone(),
+            agent_name,
+            format!("think failed: {error}"),
+        )
+        .await;
+        return Err(error);
+    }
 
     set_health(&health, agent_name, AgentHealth::Acting).await;
     let acting_event = RuntimeEvent::AgentActing {
@@ -268,7 +293,19 @@ async fn process_message_cycle(
         timestamp: std::time::SystemTime::now(),
     });
 
-    let maybe_outgoing = role.act().await?;
+    let maybe_outgoing = match role.act().await {
+        Ok(value) => value,
+        Err(error) => {
+            publish_runtime_error(
+                Arc::clone(&environment),
+                event_tx.clone(),
+                agent_name,
+                format!("act failed: {error}"),
+            )
+            .await;
+            return Err(error);
+        }
+    };
     if let Some(outgoing) = maybe_outgoing {
         let acted_event = RuntimeEvent::AgentActed {
             agent_name: agent_name.to_string(),
@@ -288,6 +325,29 @@ async fn process_message_cycle(
 
     set_health(&health, agent_name, AgentHealth::Idle).await;
     Ok(())
+}
+
+async fn publish_runtime_error(
+    environment: Arc<Environment>,
+    event_tx: broadcast::Sender<RuntimeEventWithTimestamp>,
+    agent_name: &str,
+    error_message: String,
+) {
+    let _ = event_tx.send(RuntimeEventWithTimestamp {
+        event: RuntimeEvent::ExecutionError {
+            agent_name: agent_name.to_string(),
+            error_message: error_message.clone(),
+        },
+        timestamp: std::time::SystemTime::now(),
+    });
+
+    let _ = environment
+        .publish(Message::new(
+            "system".to_string(),
+            format!("⚠️ Agent '{agent_name}' error: {error_message}"),
+            None,
+        ))
+        .await;
 }
 
 async fn set_health(

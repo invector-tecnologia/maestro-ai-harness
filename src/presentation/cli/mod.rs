@@ -356,24 +356,73 @@ async fn run_tui_with_runtime(
     config: Option<PathBuf>,
     bootstrap: OnboardingBootstrap,
 ) -> Result<()> {
-    let (environment, runtime) = if let Ok(cfg) = ConfigLoader::load(config) {
-        let mut registry = ProviderRegistry::new();
-        let _ = registry.register_builtin_providers();
-        if let Ok(resolved) = registry.resolve_default(&cfg) {
-            let env = Arc::new(Environment::new(128));
-            let rt = Arc::new(AgentRuntime::new(Arc::clone(&env)));
-            if let Ok(registrations) = registrations_from_default_personas(resolved.provider) {
-                let _ = rt.start_agents(registrations).await;
-            }
-            (Some(env), Some(rt))
-        } else {
-            (None, None)
-        }
-    } else {
-        (None, None)
-    };
+    let environment = Arc::new(Environment::new(128));
+    let mut runtime: Option<Arc<AgentRuntime>> = None;
 
-    let tui_result = run_tui(environment, runtime.clone(), bootstrap).await;
+    match ConfigLoader::load(config) {
+        Ok(cfg) => {
+            let mut registry = ProviderRegistry::new();
+            if let Err(error) = registry.register_builtin_providers() {
+                let _ = environment
+                    .publish(crate::domain::models::message::Message::new(
+                        "system".to_string(),
+                        format!("⚠️ Failed to register builtin LLM providers: {error}"),
+                        None,
+                    ))
+                    .await;
+            }
+
+            match registry.resolve_default(&cfg) {
+                Ok(resolved) => {
+                    let rt = Arc::new(AgentRuntime::new(Arc::clone(&environment)));
+                    match registrations_from_default_personas(resolved.provider) {
+                        Ok(registrations) => {
+                            if let Err(error) = rt.start_agents(registrations).await {
+                                let _ = environment
+                                    .publish(crate::domain::models::message::Message::new(
+                                        "system".to_string(),
+                                        format!("⚠️ Failed to start default personas: {error}"),
+                                        None,
+                                    ))
+                                    .await;
+                            } else {
+                                runtime = Some(rt);
+                            }
+                        }
+                        Err(error) => {
+                            let _ = environment
+                                .publish(crate::domain::models::message::Message::new(
+                                    "system".to_string(),
+                                    format!("⚠️ Invalid default personas: {error}"),
+                                    None,
+                                ))
+                                .await;
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = environment
+                        .publish(crate::domain::models::message::Message::new(
+                            "system".to_string(),
+                            format!("⚠️ LLM provider setup failed: {error}"),
+                            None,
+                        ))
+                        .await;
+                }
+            }
+        }
+        Err(error) => {
+            let _ = environment
+                .publish(crate::domain::models::message::Message::new(
+                    "system".to_string(),
+                    format!("⚠️ Could not load config: {error}"),
+                    None,
+                ))
+                .await;
+        }
+    }
+
+    let tui_result = run_tui(Some(Arc::clone(&environment)), runtime.clone(), bootstrap).await;
     if let Some(rt) = runtime {
         let _ = rt.stop_all().await;
     }
