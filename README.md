@@ -1,62 +1,64 @@
-# 🎼 Maestro Harness for AI
+# ⚡ MAESTRO HARNESS FOR AI
 
-Welcome to **Maestro Harness for AI**! If you have never used a terminal tool before, do not worry: this manual was made to hold your hand and guide you step-by-step. 
+**You are the orchestrator. This harness executes your vision.**
 
-The terminal might seem daunting, but with Maestro, it will transform into a friendly and powerful control panel!
+Maestro is a **relentless AI command deck**—built in Rust for blazing speed and rock-solid safety. Instead of coordinating human developers, you coordinate, test, and manage a **team of AI agents** to architect and build software on your command.
+
+Fire up the TUI. Define your personas, scopes, and skills. Watch your AI team synthesize, execute, and iterate. No memorized commands. No friction. Just pure orchestration.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/invector-tecnologia/maestro-ai-harness/main/docs/assets/dream-tui.png" alt="Maestro Dream TUI" width="800">
 </p>
 
----
+**▓▒░ SYNTH PROFILE ░▒▓**
 
-## 🌟 Welcome and About Maestro
+## 🌟 Core Capabilities
 
-**Maestro Harness for AI** acts exactly as a relentless *Tech Lead*. Instead of coordinating human developers, **it coordinates, tests, and manages a team of Artificial Intelligences (AIs)** to plan and build software for you.
+Maestro is **Rust-native**. Fast. Uncompromising. It delivers a rich **TUI** (Terminal User Interface) with menus, tables, real-time logs, and keyboard shortcuts—all without terminal bloat or command memorization.
 
-Built with **Rust** (making it incredibly fast and safe), it offers a "TUI" (Terminal User Interface). This means you will have menus, tables, logs, and visual shortcuts directly in your terminal, without needing to memorize dozens of commands.
+### ⚡ What You Control
+* **AI Synthesis:** Connect **Google Gemini**, **OpenAI**, **Ollama** (run models locally, free), or any LLM provider. Full provider registry. Full model parity.
+* **Governance Codex:** Define *Personas* (AI profiles), *Scopes* (execution domains), *Skills* (tool capabilities). Maestro enforces rules, validates boundaries, tracks compliance.
+* **Secure Credentials:** OAuth2 browser login to Google Gemini. Credentials stored in OS keychain—never exposed to logs or configs.
+* **Agent Observability:** Full tracing of agent decisions, token usage, cost tracking, and audit logs. Know what your AI team is doing, always.
 
-### What does it do best?
-* **AI Automation:** Works with providers like **Google Gemini** and **Ollama** (to run free models locally).
-* **AI Harness & Governance:** Automatically organizes the rules of your project, defining *Personas* (AI profiles), *Scopes* (what needs to be done), and *Skills* (AI tools), while ensuring they run safely in a controlled environment.
-* **Secure Login:** Allows you to log into your Google (Gemini) account directly via your web browser, saving credentials securely in your OS keychain.
+### ⚡ Dependency Matrix
+Maestro partitions the dependency graph into **two isolation zones**:
 
-### Dependency Domains (Important)
-Maestro now separates dependencies into two domains:
+**Zone 1: Harness Domain** — Maestro runtime readiness. LLM provider config, model catalog, connection health.
 
-1. Harness dependencies (Maestro runtime): provider config, default model availability, and core runtime readiness.
-2. Project dependencies (AI companion for your repo): toolchain and command checks defined in `maestro/project-deps.yaml`.
+**Zone 2: Project Domain** — Your repo's AI companion. Toolchain checks, command availability, framework validation (defined in `maestro/project-deps.yaml`).
 
-Use dependency checks explicitly:
+Validate each zone independently:
 
 ```bash
-maestro deps check --scope harness
-maestro deps check --scope project
-maestro deps check --scope all
+maestro deps check --scope harness      # Check Maestro runtime only
+maestro deps check --scope project      # Check project toolchain only
+maestro deps check --scope all          # Full validation
 ```
 
 ---
 
-## 🚀 Installation Steps (Bringing Maestro to your machine)
+## ⚡ BOOT SEQUENCE
 
-To install Maestro, you need to open your **Terminal** application (on macOS and Linux, search for "Terminal"; on Windows, search for "Command Prompt" or "PowerShell").
+**Open your terminal.** On macOS and Linux: search for "Terminal". On Windows: open "PowerShell" or "Command Prompt".
 
-### 🪄 Automatic Installation (Recommended for macOS and Linux)
-If you use macOS or any Linux distribution, we have created a magic script that does all the hard work for you.
+### 🪄 AUTO-DEPLOY (macOS & Linux)
+Run this one-liner to synthesize and install:
 
-In your terminal, type (or copy and paste) the command below and press `Enter`:
+**Copy and paste this command, then press `Enter`:**
 ```bash
 curl -sSL https://raw.githubusercontent.com/invector-tecnologia/maestro-multi-agents/main/scripts/install.sh | bash
 ```
-*Note: It might ask for your computer's password to place Maestro in the correct folder. When typing your password in the terminal, characters will not appear (this is normal system security!), just type and press Enter.*
+*Note: You may need to enter your system password to install. Characters won't show as you type—this is normal. Just type and press Enter.*
 
 ---
 
-### 🔧 Manual Installation by OS
-If automatic installation fails, or if you prefer to install manually, follow your system's steps:
+### 🔧 MANUAL OVERRIDE (Build from Source)
+If auto-deploy fails, or you prefer direct control, follow your OS track:
 
-#### 🍎 macOS
-Download or build the native Mac installer (`.pkg`). If you downloaded the source code, you can generate the package like this:
+#### 🍎 MACOS
+Generate the native `.pkg` installer from source:
 1. Open the terminal in the project folder.
 2. Generate the package: `./scripts/build-macos-pkg.sh 0.1.0`
 3. Install by double-clicking the generated file or run in terminal:
@@ -64,32 +66,32 @@ Download or build the native Mac installer (`.pkg`). If you downloaded the sourc
 sudo installer -pkg target/macos/build/maestro-ai-0.1.0-macos-$(uname -m).pkg -target /
 ```
 
-#### 🐧 Ubuntu / Debian / Linux Mint
-1. Open the terminal in the project folder.
-2. Generate the package: `./scripts/build-deb.sh 0.1.0`
-3. Install the generated package:
+#### 🐧 DEBIAN / UBUNTU / LINUX MINT
+1. Navigate to project folder.
+2. Build: `./scripts/build-deb.sh 0.1.0`
+3. Deploy:
 ```bash
 sudo dpkg -i target/deb/maestro-ai_0.1.0_amd64/maestro-ai.deb
 ```
 
-#### 🎩 Arch Linux / Omarchy
-1. Open the terminal in the project folder.
-2. Generate the package: `./scripts/build-omarchy-pkg.sh 0.1.0`
-3. Install with pacman:
+#### 🎩 ARCH LINUX / OMARCHY
+1. Navigate to project folder.
+2. Build: `./scripts/build-omarchy-pkg.sh 0.1.0`
+3. Deploy:
 ```bash
 sudo pacman -U --noconfirm target/omarchy/build/maestro-ai-0.1.0-1-$(uname -m).pkg.tar.zst
 ```
 
-> **Golden Tip:** also run the smoke test to validate your installation:
+> **⚡ Validation Override:** Run the smoke test to verify installation integrity:
 > `./scripts/smoke-test-omarchy.sh target/omarchy/build/maestro-ai-0.1.0-1-$(uname -m).pkg.tar.zst`
 
 ---
 
-## ⚙️ Setting Up the Office (Configuration)
+## ⚡ CONTROL DECK INITIALIZATION
 
-All governance, TUI state, and project configurations are now isolated locally inside a `maestro/` folder in your project directory. Maestro looks first for `./maestro/config.yaml` and, if not found, falls back to the global system config path.
+All governance, TUI state, and project configurations live inside the `maestro/` folder in your project root. Maestro reads `./maestro/config.yaml` first; if not found, it scans the global system config path.
 
-In this file, you define the rules of the game. A minimal configuration example to use local models via Ollama:
+**This is your control deck schema.** Define providers, models, concurrency limits, rate limits, retry logic. Example: orchestrating Ollama locally:
 
 ```yaml
 system:
@@ -116,75 +118,77 @@ providers:
       max_context_tokens: 32000
 ```
 
-(Note: If you need Bearer token authentication, just adjust the `auth_mode` parameters and export the corresponding environment variable before starting Maestro).
+**Auth Override:** For Bearer token authentication, adjust `auth_mode` to `"bearer"` and export the token as an environment variable before launching Maestro.
 
 ---
 
-## 🎮 Mission Control (Usage Guide)
+## ⚡ COMMAND EXECUTION
 
-The recommended workflow to start your workday and orchestrate activities is the following:
+**Execution Protocol.** Boot your orchestration workflow:
 
-1. **Initialize the project:** Run `maestro init <project-name>` to create the project folder, generate default config (`maestro/config.yaml`), and initial mandatory folders. The command opens the onboarding interview mode by default.
-2. **Optional automation mode:** Use `maestro init <project-name> --no-tui` when you need non-interactive setup for scripts or CI.
-3. **Validate the terrain:** Run `maestro validate-config` to ensure your settings and file dependencies are correct.
-4. **Open the panel:** Type `maestro tui` to access your interactive dashboard.
-5. **Plan and delegate:** Inside the TUI, use the commands `/new scope`, `/new persona`, and `/new skill` to map your architecture requirements.
-6. **Get to work:** Run `maestro run` to execute the automated work cycles of your agent team and track the logs in the Harness.
+1. **INIT** — `maestro init <project-name>` synthesizes project folder, default config, and mandatory directories. Opens interactive onboarding by default.
+2. **SCRIPTED INIT** — `maestro init <project-name> --no-tui` for CI/CD and automation (no interactive prompts).
+3. **VALIDATE** — `maestro validate-config` checks configuration integrity and dependency health.
+4. **LAUNCH** — `maestro tui` fires up your interactive command deck.
+5. **ARCHITECT** — Inside TUI, execute `/new scope`, `/new persona`, `/new skill` to map execution domains and AI profiles.
+6. **EXECUTE** — `maestro run` triggers automated work cycles. Monitor logs. Watch your AI team synthesize.
 
-### Other Useful Terminal Commands (CLI)
+### ⚡ Utility Commands
 
-* **`maestro doctor`:** Performs a quick check-up to see if your environment structure and mandatory markdowns are healthy.
-* **`maestro init-config`:** Generates only the default config file (`maestro/config.yaml`) in the current directory.
-* **`maestro scaffold-markdown`:** Generates only the initial Markdown folders and files in the current directory.
-* **`maestro deps check --scope <harness|project|all>`:** Validates dependency domains independently.
-* **`maestro list-agents`:** Displays the list of all personas registered in your current catalog.
-* **`maestro onboarding --mode fast`:** Starts onboarding with safe defaults and the shortest path to a working setup.
-* **`maestro onboarding --mode detailed`:** Starts the guided interview with more controls and setup questions.
+* **`maestro doctor`** — Health scan. Validates environment, mandatory markdowns, and config readiness.
+* **`maestro init-config`** — Generates only `maestro/config.yaml`.
+* **`maestro scaffold-markdown`** — Generates only Markdown folder structure.
+* **`maestro deps check --scope <harness|project|all>`** — Validates dependency zones independently.
+* **`maestro list-agents`** — Catalogs all registered personas.
+* **`maestro onboarding --mode fast`** — Rapid onboarding with safe defaults.
+* **`maestro onboarding --mode detailed`** — Full guided interview with advanced options.
 
-### 🐞 Debug Mode
+### 🐞 DEBUG OVERRIDE
 
-To start with detailed logs (DEBUG level), use:
+Enable full tracing and write debug logs:
 
 ```bash
 MAESTRO_DEBUG=1 maestro tui
 ```
 
-Logs are written to the `maestro.log` file in the current directory.
+Logs stream to `maestro.log` in the current directory.
 
 ---
 
-## 🛡️ Quality and License
+## ⚡ GOVERNANCE OVERRIDE
 
-Before any release, quality is validated. There is a single Quality Gate that can be run via `./scripts/quality-gate.sh`. There is also a local script to package and publish releases on GitHub: `./scripts/publish-github.sh v0.1.0`.
+Every release passes through a **Quality Gate**. Validate locally:
 
-### Pull Request Governance Gate
+```bash
+./scripts/quality-gate.sh              # Run full quality validation
+./scripts/publish-github.sh v0.1.0    # Build and publish release to GitHub
+```
 
-This repository enforces PR governance through `.github/workflows/ai-governance-gate.yml`.
+### ⚡ PR Governance Protocol
 
-Required PR body structure:
-1. `## Linked Plan Task` with exactly one line in this format:
+This repository enforces **CI-gated governance** through `.github/workflows/ai-governance-gate.yml`.
+
+**Required PR Structure:**
+1. `## Linked Plan Task` — exactly one line:
   - `- Path: docs/Maestro_Execution_Plans/tasks/<task>.md`
-2. `## Acceptance Criteria` using IDs like `AC1`, `AC2`, `AC3`.
-3. `## Validation Evidence` including one evidence line per AC ID.
+2. `## Acceptance Criteria` — IDs like `AC1`, `AC2`, `AC3`.
+3. `## Validation Evidence` — one evidence line per AC ID.
 
-The minimum number of acceptance criteria is configurable through the repository variable `MIN_ACCEPTANCE_ITEMS`.
+**Acceptance Criteria Floor:** Configurable via repository variable `MIN_ACCEPTANCE_ITEMS`. Defaults to `3` if not set.
 
-If `MIN_ACCEPTANCE_ITEMS` is not set, CI uses the default value `3`.
+**Configure in GitHub:**
+1. Repo Settings → `Secrets and variables` → `Actions` → `Variables`
+2. Create `MIN_ACCEPTANCE_ITEMS` with numeric value (e.g., `4`)
 
-How to set it in GitHub:
-1. Open repository settings.
-2. Go to `Secrets and variables` > `Actions` > `Variables`.
-3. Create `MIN_ACCEPTANCE_ITEMS` with a numeric value (for example: `4`).
-
-The project is distributed under the MIT License.
+**License:** MIT
 
 ---
 
-## 📚 Documentation Information Architecture
+## ⚡ REFERENCE GRID
 
-The `docs/` folder is organized by value stream and usage context:
+The `docs/` folder is your knowledge base, organized by execution domain:
 
-* **`docs/Maestro_Execution_Plans/`:** Product and development execution plans, release candidates, and milestone tasks.
-* **`docs/Practical_Guides/`:** Hands-on guides for onboarding, installation checks, and practical adoption.
-* **`docs/User_Manual/`:** Command and panel reference for day-to-day operation.
-* **`docs/Maestro_Manifesto/`:** Core architecture, conventions, philosophy, feature levels, and value streams.
+* **`docs/Maestro_Execution_Plans/`** — Roadmap: execution plans, release candidates, milestone specs.
+* **`docs/Practical_Guides/`** — Tutorials: onboarding, smoke tests, adoption playbooks.
+* **`docs/User_Manual/`** — Runtime reference: commands, panels, day-to-day operations.
+* **`docs/Maestro_Manifesto/`** — Architecture truth: design philosophy, conventions, feature matrix, value streams.
