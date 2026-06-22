@@ -70,14 +70,13 @@ jobs:
       - name: Validate acceptance criteria count and evidence mapping
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-          MIN_ACCEPTANCE_ITEMS: ${{ vars.MIN_ACCEPTANCE_ITEMS }}
-          DEFAULT_MIN_ACCEPTANCE_ITEMS: "3"
+          MIN_ACCEPTANCE_ITEMS: "3"
         run: |
           set -euo pipefail
           BODY_FILE="$(mktemp)"
           printf '%s\n' "$PR_BODY" > "$BODY_FILE"
 
-          effective_min_items="${MIN_ACCEPTANCE_ITEMS:-$DEFAULT_MIN_ACCEPTANCE_ITEMS}"
+          effective_min_items="$MIN_ACCEPTANCE_ITEMS"
           if [[ ! "$effective_min_items" =~ ^[0-9]+$ ]]; then
             echo "MIN_ACCEPTANCE_ITEMS must be numeric. Current value: $effective_min_items"
             exit 1
