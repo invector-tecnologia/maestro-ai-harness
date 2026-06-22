@@ -6,6 +6,10 @@ Maestro is a **relentless AI command deck**—built in Rust for blazing speed an
 
 Fire up the TUI. Define your personas, scopes, and skills. Watch your AI team synthesize, execute, and iterate. No memorized commands. No friction. Just pure orchestration.
 
+> 🚧 **PRE-RELEASE / ACTIVE DEVELOPMENT**
+>
+> Maestro **0.1.0** is a **Minimum Lovable Product (MLP)**. Core runtime features are functional and tested, but many capabilities remain in development. This is **not production-ready software**. See [Feature Status](#-feature-status) below for detailed maturity levels. Expect breaking changes and incomplete workflows.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/invector-tecnologia/maestro-ai-harness/main/docs/assets/dream-tui.png" alt="Maestro Dream TUI" width="800">
 </p>
@@ -17,10 +21,10 @@ Fire up the TUI. Define your personas, scopes, and skills. Watch your AI team sy
 Maestro is **Rust-native**. Fast. Uncompromising. It delivers a rich **TUI** (Terminal User Interface) with menus, tables, real-time logs, and keyboard shortcuts—all without terminal bloat or command memorization.
 
 ### ⚡ What You Control
-* **AI Synthesis:** Connect **Google Gemini**, **OpenAI**, **Ollama** (run models locally, free), or any LLM provider. Full provider registry. Full model parity.
-* **Governance Codex:** Define *Personas* (AI profiles), *Scopes* (execution domains), *Skills* (tool capabilities). Maestro enforces rules, validates boundaries, tracks compliance.
-* **Secure Credentials:** OAuth2 browser login to Google Gemini. Credentials stored in OS keychain—never exposed to logs or configs.
-* **Agent Observability:** Full tracing of agent decisions, token usage, cost tracking, and audit logs. Know what your AI team is doing, always.
+* **✅ AI Synthesis (Operational):** Connect **Ollama** (run models locally, free). Provider registry foundation complete. Google Gemini, OpenAI integration planned for v0.2+.
+* **🚧 Governance Codex (In Progress):** Define *Personas* (AI profiles), *Scopes* (execution domains), *Skills* (tool capabilities). Core persona/scope creation works; skill system and compliance enforcement in development.
+* **📋 Secure Credentials (Planned):** OAuth2 browser login to Google Gemini planned. Basic local config auth operational; keychain integration roadmap v0.2+.
+* **✅ Agent Observability (Operational):** Tracing of agent decisions and token usage implemented. Cost tracking and full audit logs planned for v0.2+.
 
 ### ⚡ Dependency Matrix
 Maestro partitions the dependency graph into **two isolation zones**:
@@ -39,7 +43,24 @@ maestro deps check --scope all          # Full validation
 
 ---
 
+## ⚡ FEATURE STATUS
+
+Maestro's capabilities are organized by maturity level. **Current release: 0.1.0 (Foundational + partial Core)**
+
+| Level | Status | Examples |
+|-------|--------|----------|
+| **Foundational** | ✅ Complete | `maestro init`, config validation, readiness checks, markdown scaffolding |
+| **Core** | 🚧 Partial | Multi-agent runtime (basic), TUI dashboard, Ollama provider, persona/scope creation |
+| **Advanced** | 📋 Planned | Guided onboarding resumption, accessibility controls, cross-platform packaging |
+| **Enterprise** | 📋 Roadmap | Compliance reporting, policy extension, audit analytics |
+
+**See [`docs/Maestro_Manifesto/FEATURE_LEVELS.md`](docs/Maestro_Manifesto/FEATURE_LEVELS.md) for detailed capability breakdown.**
+
+---
+
 ## ⚡ BOOT SEQUENCE
+
+**⚠️ FOR DEVELOPMENT & TESTING ONLY** — This is pre-release software. Suitable for local testing and development workflows. Do not deploy to production environments.
 
 **Open your terminal.** On macOS and Linux: search for "Terminal". On Windows: open "PowerShell" or "Command Prompt".
 
@@ -50,7 +71,7 @@ Run this one-liner to synthesize and install:
 ```bash
 curl -sSL https://raw.githubusercontent.com/invector-tecnologia/maestro-multi-agents/main/scripts/install.sh | bash
 ```
-*Note: You may need to enter your system password to install. Characters won't show as you type—this is normal. Just type and press Enter.*
+*Note: You may need to enter your system password to install. Characters won't show as you type—this is normal. Just type and press Enter. This builds and installs from source for testing/development environments.*
 
 ---
 
