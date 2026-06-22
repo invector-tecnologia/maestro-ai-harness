@@ -2,7 +2,7 @@
 
 **You are the orchestrator. This harness executes your vision.**
 
-Maestro is a **relentless AI command deck**—built in Rust for blazing speed and rock-solid safety. Instead of coordinating human developers, you coordinate, test, and manage a **team of AI agents** to architect and build software on your command.
+Maestro is a **relentless AI command deck**, built in Rust for blazing speed and rock-solid safety. Instead of coordinating human developers, you coordinate, test, and manage a **team of AI agents** to architect and build software on your command.
 
 Fire up the TUI. Define your personas, scopes, and skills. Watch your AI team synthesize, execute, and iterate. No memorized commands. No friction. Just pure orchestration.
 
