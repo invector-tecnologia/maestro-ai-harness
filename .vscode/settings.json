@@ -1,7 +1,23 @@
 {
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true,
   "github.copilot.chat.codeGeneration.instructions": [
     {
       "file": ".github/copilot-instructions.md"
+    }
+  ],
+  "github.copilot.chat.commitMessageGeneration.instructions": [
+    {
+      "text": "Use Conventional Commits. Reference exactly one linked plan task path when available. Keep subject imperative and under 72 characters."
+    }
+  ],
+  "github.copilot.chat.pullRequestDescriptionGeneration.instructions": [
+    {
+      "file": ".github/PULL_REQUEST_TEMPLATE.md"
+    }
+  ],
+  "github.copilot.chat.reviewSelection.instructions": [
+    {
+      "text": "Prioritize findings using AI Governance Gate wording and order. Verify these are explicitly satisfied: Spec updated or explicitly confirmed unchanged; Acceptance criteria validated with evidence; Architecture boundaries respected (domain/application/infrastructure/presentation); Convention checks respected (unwrap/expect/panic not introduced, tracing used for observability); Tests added or updated for changed behavior. Also verify exactly one linked plan task line in the form '- Path: docs/Maestro_Execution_Plans/tasks/<task>.md', and ensure each AC ID in Acceptance Criteria has matching evidence in Validation Evidence."
     }
   ]
 }
