@@ -49,7 +49,7 @@
 * INC6: Fold the picker into Interview Mode as a select stage, remove the standalone Core Mode, and fold CreationWizard into the interview-driven editor (`src/presentation/tui/mod.rs`). Covers AC5 and AC7.
 * INC7: Maestro authoring pipeline — Project Manager agent writes scope first, then Maestro reads the scope and derives Project Manager / Quality Assurance / User Experience / Software Engineer additions, then dependency audit hand-off to Workspace (`src/application/interview_bot.rs`, `src/application/persona_operations.rs`). Covers AC9 and AC10. (done)
 * INC8: CLI entry launches Interview Mode governance with a dedicated outcome (`src/presentation/cli/mod.rs`). Covers AC8. (done)
-* INC9: Workspace panel roles and focus-flow integration pass (`src/presentation/tui/mod.rs`). Covers AC11.
+* INC9: Workspace panel roles and focus-flow integration pass (`src/presentation/tui/mod.rs`). Covers AC11. (done)
 * INC10: Sequential Maestro-orchestrated agent workflow with real-time narration and 5-second heartbeat (`src/application/agent_runtime.rs`, `src/application/agent_observability.rs`). Covers AC12.
 * INC11: Quality gate run and evidence capture. Covers AC13.
 

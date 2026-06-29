@@ -48,8 +48,44 @@ pub enum UIMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum PanelFocus {
     #[default]
-    Workspace,
+    Input,
+    Orchestration,
+    AgentActivity,
     Readiness,
+}
+
+impl PanelFocus {
+    /// Deterministic Workspace focus flow: input -> orchestration -> agent
+    /// activity -> readiness/actions, then back to input.
+    fn next(self) -> Self {
+        match self {
+            PanelFocus::Input => PanelFocus::Orchestration,
+            PanelFocus::Orchestration => PanelFocus::AgentActivity,
+            PanelFocus::AgentActivity => PanelFocus::Readiness,
+            PanelFocus::Readiness => PanelFocus::Input,
+        }
+    }
+
+    /// Human-readable role label for the focused panel.
+    fn role_label(self) -> &'static str {
+        match self {
+            PanelFocus::Input => "Input",
+            PanelFocus::Orchestration => "Orchestration",
+            PanelFocus::AgentActivity => "Agent Activity",
+            PanelFocus::Readiness => "Readiness / Actions",
+        }
+    }
+}
+
+/// Border style for a Workspace panel, highlighted when it currently holds focus.
+fn panel_border_style(focused: bool) -> Style {
+    if focused {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Rgb(218, 165, 32))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,10 +408,7 @@ impl TuiApp {
     }
 
     fn toggle_focus(&mut self) {
-        self.focus = match self.focus {
-            PanelFocus::Workspace => PanelFocus::Readiness,
-            PanelFocus::Readiness => PanelFocus::Workspace,
-        };
+        self.focus = self.focus.next();
     }
 
     pub fn tick_animation(&mut self) {
@@ -554,19 +587,19 @@ impl TuiApp {
             }
             ReadinessAction::CreateScope => {
                 self.wizard = Some(CreationWizard::new_scope());
-                self.focus = PanelFocus::Workspace;
+                self.focus = PanelFocus::Input;
                 self.logs
                     .push("readiness action: scope wizard started".to_string());
             }
             ReadinessAction::CreatePersona => {
                 self.wizard = Some(CreationWizard::new_persona());
-                self.focus = PanelFocus::Workspace;
+                self.focus = PanelFocus::Input;
                 self.logs
                     .push("readiness action: persona wizard started".to_string());
             }
             ReadinessAction::CreateSkill => {
                 self.wizard = Some(CreationWizard::new_skill());
-                self.focus = PanelFocus::Workspace;
+                self.focus = PanelFocus::Input;
                 self.logs
                     .push("readiness action: skill wizard started".to_string());
             }
@@ -1693,9 +1726,13 @@ fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ap
         .style(Style::default().fg(Color::White))
         .block(
             Block::default()
-                .title("Readiness")
+                .title("④ Readiness")
                 .borders(Borders::ALL)
-                .border_style(if all_ready {
+                .border_style(if app.focus == PanelFocus::Readiness {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else if all_ready {
                     Style::default().fg(Color::Green)
                 } else {
                     Style::default().fg(Color::Red)
@@ -1706,14 +1743,8 @@ fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, ap
 
     let mut actions_lines = vec![];
 
-    actions_lines.push(format!(
-        "Focus: {} (Tab to switch)",
-        if app.focus == PanelFocus::Readiness {
-            "Readiness"
-        } else {
-            "Workspace"
-        }
-    ));
+    actions_lines.push("Flow: ①Input → ②Orchestration → ③Agent Activity → ④Readiness".to_string());
+    actions_lines.push(format!("Focus: {} (Tab cycles)", app.focus.role_label()));
     actions_lines.push(String::new());
 
     if !all_ready {
@@ -1916,9 +1947,9 @@ fn render_agents_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: 
     .header(Row::new(vec!["Agent", "Status"]).style(Style::default().fg(Color::Rgb(218, 165, 32))))
     .block(
         Block::default()
-            .title("Agents")
+            .title("③ Agent Activity")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(218, 165, 32))),
+            .border_style(panel_border_style(app.focus == PanelFocus::AgentActivity)),
     );
 
     frame.render_widget(table, area);
@@ -1936,26 +1967,26 @@ fn render_monitor_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app:
 
     let list = List::new(items).block(
         Block::default()
-            .title("Monitor")
+            .title("② Orchestration")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(218, 165, 32))),
+            .border_style(panel_border_style(app.focus == PanelFocus::Orchestration)),
     );
     frame.render_widget(list, area);
 }
 
 fn render_input_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
+    let is_focused = app.wizard.is_some() || app.focus == PanelFocus::Input;
     let paragraph = Paragraph::new(app.input.as_str())
         .style(Style::default().fg(Color::White))
         .block(
             Block::default()
-                .title(app.current_input_title())
+                .title(format!("① Input · {}", app.current_input_title()))
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(218, 165, 32))),
+                .border_style(panel_border_style(is_focused)),
         );
 
     frame.render_widget(paragraph, area);
 
-    let is_focused = app.wizard.is_some() || app.focus == PanelFocus::Workspace;
     if is_focused {
         let max_x = area.x + area.width.saturating_sub(2);
         let cursor_x = (area.x + 1 + app.input.chars().count() as u16).min(max_x);
@@ -2897,7 +2928,7 @@ mod tests {
                 project_failed_required_hints: vec![],
                 project_error: None,
             },
-            focus: PanelFocus::Workspace,
+            focus: PanelFocus::Input,
             readiness_selected_action: 0,
             wizard: None,
             animation_frame: 0,
@@ -2916,9 +2947,9 @@ mod tests {
         assert!(drawn.is_ok());
 
         let content = buffer_to_string(&terminal);
-        assert!(content.contains("Agents"));
-        assert!(content.contains("Monitor"));
-        assert!(content.contains("Command"));
+        assert!(content.contains("Agent Activity"));
+        assert!(content.contains("Orchestration"));
+        assert!(content.contains("Input"));
         assert!(content.contains("Readiness"));
         assert!(content.contains("Product"));
         assert!(content.contains("idle"));
@@ -3012,13 +3043,24 @@ mod tests {
     }
 
     #[test]
-    fn tab_focuses_readiness_panel() {
+    fn tab_cycles_workspace_focus_flow_deterministically() {
         let mut app = TuiApp::default();
+        assert_eq!(app.focus, PanelFocus::Input);
 
-        let action = app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-        assert!(action.is_none());
+        let tab = || KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+
+        assert!(app.handle_key_event(tab()).is_none());
+        assert_eq!(app.focus, PanelFocus::Orchestration);
+
+        assert!(app.handle_key_event(tab()).is_none());
+        assert_eq!(app.focus, PanelFocus::AgentActivity);
+
+        assert!(app.handle_key_event(tab()).is_none());
         assert_eq!(app.focus, PanelFocus::Readiness);
         assert!(app.current_input_title().contains("Readiness focus"));
+
+        assert!(app.handle_key_event(tab()).is_none());
+        assert_eq!(app.focus, PanelFocus::Input);
     }
 
     #[test]
