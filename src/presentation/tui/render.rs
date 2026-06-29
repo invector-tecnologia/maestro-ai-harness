@@ -287,7 +287,7 @@ fn readiness_line(label: &str, ok: bool) -> String {
 pub(super) fn evaluate_project_dependency_domains(
     root: &std::path::Path,
 ) -> DependencyDomainsState {
-    let deps_path = root.join("maestro").join("project-deps.yaml");
+    let deps_path = root.join("maestro").join("project-deps.yml");
     if !deps_path.exists() {
         return DependencyDomainsState {
             project_manifest_found: false,
@@ -295,7 +295,7 @@ pub(super) fn evaluate_project_dependency_domains(
             project_required_checks_passed: false,
             project_failed_required: Vec::new(),
             project_failed_required_hints: Vec::new(),
-            project_error: Some("maestro/project-deps.yaml not found".to_string()),
+            project_error: Some("maestro/project-deps.yml not found".to_string()),
         };
     }
 

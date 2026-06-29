@@ -11,9 +11,9 @@
 * Existing onboarding and init flows must remain backwards-compatible.
 
 ## 3. ACCEPTANCE CRITERIA
-* AC1: Introduce a project dependency manifest under `maestro/project-deps.yaml` with schema validation.
+* AC1: Introduce a project dependency manifest under `maestro/project-deps.yml` with schema validation.
 * AC2: Add CLI dependency checks that can target harness deps, project deps, or both.
-* AC3: `maestro init` and `maestro scaffold-markdown` scaffold a default `project-deps.yaml` when missing.
+* AC3: `maestro init` and `maestro scaffold-markdown` scaffold a default `project-deps.yml` when missing.
 * AC4: Documentation explains the two dependency domains and the corresponding CLI commands.
 * AC5: Parsing and execution tests cover positive and failure scenarios for project dependency checks.
 

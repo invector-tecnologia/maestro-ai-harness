@@ -527,7 +527,7 @@ pub async fn run_tui(
                                 }
                             }
                             Some(UserAction::ManageProjectDeps) => {
-                                let deps_path = root_path.join("maestro").join("project-deps.yaml");
+                                let deps_path = root_path.join("maestro").join("project-deps.yml");
                                 if !deps_path.exists() {
                                     if let Some(parent) = deps_path.parent() {
                                         let _ = fs::create_dir_all(parent);
@@ -539,7 +539,7 @@ pub async fn run_tui(
                                         ));
                                     } else {
                                         app.logs.push(
-                                            "⚠️ Failed to create maestro/project-deps.yaml from interview mode"
+                                            "⚠️ Failed to create maestro/project-deps.yml from interview mode"
                                                 .to_string(),
                                         );
                                         continue;
@@ -552,7 +552,7 @@ pub async fn run_tui(
                                 }
 
                                 app.logs.push(
-                                    "✍️ Edit maestro/project-deps.yaml to add required tools and checks."
+                                    "✍️ Edit maestro/project-deps.yml to add required tools and checks."
                                         .to_string(),
                                 );
                                 app.logs.push(
@@ -563,7 +563,7 @@ pub async fn run_tui(
                                     let _ = env
                                         .publish(Message::new(
                                             "Maestro".to_string(),
-                                            "Project deps helper: edit maestro/project-deps.yaml and run 'maestro deps check --scope project'."
+                                            "Project deps helper: edit maestro/project-deps.yml and run 'maestro deps check --scope project'."
                                                 .to_string(),
                                             app.maestro_message_id,
                                         ))

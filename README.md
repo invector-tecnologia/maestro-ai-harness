@@ -41,7 +41,7 @@ Maestro partitions the dependency graph into **two isolation zones**:
 
 **Zone 1: Harness Domain** — Maestro runtime readiness. LLM provider config, model catalog, connection health.
 
-**Zone 2: Project Domain** — Your repo's AI companion. Toolchain checks, command availability, framework validation (defined in `maestro/project-deps.yaml`).
+**Zone 2: Project Domain** — Your repo's AI companion. Toolchain checks, command availability, framework validation (defined in `maestro/project-deps.yml`).
 
 Validate each zone independently:
 

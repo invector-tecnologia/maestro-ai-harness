@@ -159,7 +159,7 @@ fn check_command_reports_readiness_gaps() {
             project_required_checks_passed: false,
             project_failed_required: vec![],
             project_failed_required_hints: vec![],
-            project_error: Some("maestro/project-deps.yaml not found".to_string()),
+            project_error: Some("maestro/project-deps.yml not found".to_string()),
         },
         ..TuiApp::default()
     };

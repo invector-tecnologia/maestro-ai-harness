@@ -1169,7 +1169,7 @@ fn derive_scope_addition(persona: &str, objective: &str, content_lc: &str) -> Pe
 fn dependency_audit_actions(project_deps: Option<&ProjectDepsConfig>) -> Vec<String> {
     match project_deps {
         None => vec![
-            "Maestro audit: declare project dependencies in maestro/project-deps.yaml.".to_string(),
+            "Maestro audit: declare project dependencies in maestro/project-deps.yml.".to_string(),
         ],
         Some(config) => {
             let mut actions: Vec<String> = config

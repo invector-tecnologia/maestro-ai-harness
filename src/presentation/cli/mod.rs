@@ -781,7 +781,7 @@ fn scaffold_skills(governance: &MarkdownGovernance) -> Result<()> {
 }
 
 fn scaffold_project_deps(root: &std::path::Path) -> Result<()> {
-    let path = root.join("maestro").join("project-deps.yaml");
+    let path = root.join("maestro").join("project-deps.yml");
     if !path.exists() {
         std::fs::write(path, DEFAULT_PROJECT_DEPS_TEMPLATE)?;
     }
@@ -1025,7 +1025,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("maestro-deps-{}", Uuid::new_v4()));
         assert!(std::fs::create_dir_all(root.join("maestro")).is_ok());
 
-        let deps_path = root.join("maestro").join("project-deps.yaml");
+        let deps_path = root.join("maestro").join("project-deps.yml");
         let content = "dependencies:\n  - name: shell\n    check_command: \"command -v sh >/dev/null 2>&1\"\n    required: true\n";
         assert!(std::fs::write(&deps_path, content).is_ok());
 

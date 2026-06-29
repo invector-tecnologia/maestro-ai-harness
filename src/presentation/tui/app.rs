@@ -223,7 +223,7 @@ impl TuiApp {
             }
             ReadinessAction::CreateProjectDepsTemplate => {
                 let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let deps_path = root.join("maestro").join("project-deps.yaml");
+                let deps_path = root.join("maestro").join("project-deps.yml");
                 if !deps_path.exists() {
                     if let Some(parent) = deps_path.parent() {
                         let _ = fs::create_dir_all(parent);
@@ -713,7 +713,7 @@ impl TuiApp {
                     }
                     if !self.dependency_domains.project_manifest_found {
                         self.logs.push(
-                            "  7. Create maestro/project-deps.yaml (use readiness action or maestro scaffold-markdown)"
+                            "  7. Create maestro/project-deps.yml (use readiness action or maestro scaffold-markdown)"
                                 .to_string(),
                         );
                     }

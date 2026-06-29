@@ -88,7 +88,7 @@ pub fn default_project_deps_path() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("maestro")
-        .join("project-deps.yaml")
+        .join("project-deps.yml")
 }
 
 pub const DEFAULT_PROJECT_DEPS_TEMPLATE: &str = "dependencies:\n  - name: git\n    check_command: \"command -v git >/dev/null 2>&1\"\n    required: true\n    install_hint: \"Install Git and ensure it is available in PATH.\"\n  - name: cargo\n    check_command: \"command -v cargo >/dev/null 2>&1\"\n    required: false\n    install_hint: \"Install Rust toolchain if this project uses Rust.\"\n";
