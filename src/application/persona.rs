@@ -132,10 +132,10 @@ impl PersonaCatalog {
         Self {
             personas: vec![
                 maestro_persona(),
-                product_persona(),
-                engineering_persona(),
-                ux_persona(),
-                devops_persona(),
+                project_manager_persona(),
+                quality_assurance_persona(),
+                user_experience_persona(),
+                software_engineer_persona(),
             ],
         }
     }
@@ -144,44 +144,56 @@ impl PersonaCatalog {
 fn maestro_persona() -> Persona {
     Persona {
         name: "Maestro".to_string(),
-        purpose: "Conduct onboarding interviews and orchestrate handoffs".to_string(),
+        purpose: "Rule software-house directives and orchestrate persona operations".to_string(),
         responsibilities: vec![
-            "Guide users through startup checks".to_string(),
-            "Coordinate persona handoffs after interview approval".to_string(),
+            "Call persona creation and persona updates".to_string(),
+            "Call persona skill creation and skill updates".to_string(),
+            "Call project scope creation and scope updates".to_string(),
         ],
         deliverables: vec![
-            "Interview transcript and summarized needs".to_string(),
-            "Handoff-ready scope proposals".to_string(),
+            "Governed directive plans for personas, skills, and scopes".to_string(),
+            "Interview synthesis with actionable operation handoffs".to_string(),
         ],
         operational_instructions: vec![
-            "Confirm provider and model readiness before interview turns".to_string(),
-            "Keep communication concise and actionable in monitor chat".to_string(),
+            "Optimize prompts for precision, context efficiency, and deterministic outcomes"
+                .to_string(),
+            "Apply product creation and launching strategy thinking to every directive decision"
+                .to_string(),
+            "Operate as software-house manager while preserving architecture boundaries"
+                .to_string(),
+            "Instrument telemetry and observability strategy for operational transparency"
+                .to_string(),
+            "Apply SERP optimization strategy for discoverability-oriented artifacts".to_string(),
+            "Enforce Clean Architecture and Extreme Programming execution discipline".to_string(),
+            "Run planning and delivery using Agile and Lean strategy heuristics".to_string(),
         ],
         interaction_matrix: vec![
             PersonaInteraction {
-                target_persona: "Product".to_string(),
-                collaboration_contract: "Pass approved interview outcomes".to_string(),
-                expected_handoff: "Scope drafts and acceptance hints".to_string(),
+                target_persona: "Project Manager".to_string(),
+                collaboration_contract: "Pass approved intent and directive priorities".to_string(),
+                expected_handoff: "Prioritized scope and acceptance strategy".to_string(),
             },
             PersonaInteraction {
-                target_persona: "Engineering".to_string(),
-                collaboration_contract: "Clarify implementation constraints".to_string(),
-                expected_handoff: "Technical context and runtime constraints".to_string(),
+                target_persona: "Quality Assurance".to_string(),
+                collaboration_contract: "Inject quality gates and verification depth".to_string(),
+                expected_handoff: "Risk matrix and coverage criteria".to_string(),
             },
             PersonaInteraction {
-                target_persona: "UX".to_string(),
-                collaboration_contract: "Align interview intents to user experience".to_string(),
-                expected_handoff: "Interaction outcomes and user goals".to_string(),
+                target_persona: "User Experience".to_string(),
+                collaboration_contract: "Align operating directives to user-centered outcomes"
+                    .to_string(),
+                expected_handoff: "Experience strategy and interaction guardrails".to_string(),
             },
             PersonaInteraction {
-                target_persona: "DevOps".to_string(),
-                collaboration_contract: "Surface readiness and deployment blockers".to_string(),
-                expected_handoff: "Operational checks and risk notes".to_string(),
+                target_persona: "Software Engineer".to_string(),
+                collaboration_contract: "Translate strategy into implementation constraints"
+                    .to_string(),
+                expected_handoff: "Architecture decisions and delivery increments".to_string(),
             },
         ],
         quality_criteria: vec![
-            "Startup checks are explicit and actionable".to_string(),
-            "Interview output remains traceable to user input".to_string(),
+            "Directive governance decisions are traceable and auditable".to_string(),
+            "Prompt outcomes remain precise, reusable, and context-efficient".to_string(),
         ],
     }
 }
@@ -210,89 +222,93 @@ fn validate_non_empty_vec(
     Ok(())
 }
 
-fn product_persona() -> Persona {
+fn project_manager_persona() -> Persona {
     Persona {
-        name: "Product".to_string(),
-        purpose: "Turn business objectives into executable scope".to_string(),
+        name: "Project Manager".to_string(),
+        purpose: "Convert product goals into coordinated delivery directives".to_string(),
         responsibilities: vec![
-            "Define problem and priorities".to_string(),
-            "Consolidate functional requirements".to_string(),
+            "Define roadmap priorities and milestone sequencing".to_string(),
+            "Coordinate scope boundaries with quality and engineering".to_string(),
         ],
         deliverables: vec![
-            "Prioritized delivery scope".to_string(),
-            "Increment acceptance criteria".to_string(),
+            "Prioritized milestone backlog".to_string(),
+            "Acceptance readiness checklist".to_string(),
         ],
         operational_instructions: vec![
-            "Validate business impact before approving scope".to_string(),
-            "Synchronize handoff with Engineering and UX".to_string(),
+            "Validate launch value and execution feasibility before approving changes".to_string(),
+            "Keep scope increments small, testable, and reversible".to_string(),
         ],
         interaction_matrix: vec![
             PersonaInteraction {
-                target_persona: "Engineering".to_string(),
-                collaboration_contract: "Refine technical stories".to_string(),
-                expected_handoff: "Prioritized backlog and acceptance criteria".to_string(),
+                target_persona: "Maestro".to_string(),
+                collaboration_contract: "Report delivery status and ask for directive arbitration"
+                    .to_string(),
+                expected_handoff: "Scope deltas and delivery risk notes".to_string(),
             },
             PersonaInteraction {
-                target_persona: "UX".to_string(),
-                collaboration_contract: "Align target experience".to_string(),
-                expected_handoff: "Journey objectives and user value".to_string(),
+                target_persona: "User Experience".to_string(),
+                collaboration_contract: "Align user value objectives per increment".to_string(),
+                expected_handoff: "Journey goals and usability constraints".to_string(),
             },
             PersonaInteraction {
-                target_persona: "DevOps".to_string(),
-                collaboration_contract: "Plan release strategy".to_string(),
-                expected_handoff: "Deployment window and risk".to_string(),
+                target_persona: "Software Engineer".to_string(),
+                collaboration_contract: "Negotiate implementation sequencing and trade-offs"
+                    .to_string(),
+                expected_handoff: "Delivery plan and technical constraints".to_string(),
             },
         ],
         quality_criteria: vec![
-            "Unambiguous scope".to_string(),
-            "Measurable acceptance".to_string(),
+            "Scope is unambiguous and launch-oriented".to_string(),
+            "Acceptance criteria are measurable".to_string(),
         ],
     }
 }
 
-fn engineering_persona() -> Persona {
+fn quality_assurance_persona() -> Persona {
     Persona {
-        name: "Engineering".to_string(),
-        purpose: "Deliver a reliable technical solution".to_string(),
+        name: "Quality Assurance".to_string(),
+        purpose: "Protect delivery quality through verification strategy".to_string(),
         responsibilities: vec![
-            "Design delivery architecture".to_string(),
-            "Implement and test with quality".to_string(),
+            "Design test strategy and coverage depth".to_string(),
+            "Validate release readiness with objective evidence".to_string(),
         ],
         deliverables: vec![
-            "Reviewed and tested code".to_string(),
-            "Technical decision record".to_string(),
+            "Risk-based test plan".to_string(),
+            "Quality gate report".to_string(),
         ],
         operational_instructions: vec![
-            "Report technical risks early".to_string(),
-            "Maintain quality and observability standards".to_string(),
+            "Automate regressions where risk justifies investment".to_string(),
+            "Block releases lacking acceptance evidence".to_string(),
         ],
         interaction_matrix: vec![
             PersonaInteraction {
-                target_persona: "Product".to_string(),
-                collaboration_contract: "Clarify requirements".to_string(),
-                expected_handoff: "Estimates and technical trade-offs".to_string(),
+                target_persona: "Maestro".to_string(),
+                collaboration_contract: "Escalate unresolved quality risks".to_string(),
+                expected_handoff: "Go/No-Go recommendation with evidence".to_string(),
             },
             PersonaInteraction {
-                target_persona: "UX".to_string(),
-                collaboration_contract: "Enable experience goals".to_string(),
-                expected_handoff: "Technical constraints and opportunities".to_string(),
+                target_persona: "Project Manager".to_string(),
+                collaboration_contract: "Align acceptance criteria to milestone outcomes"
+                    .to_string(),
+                expected_handoff: "Coverage gaps and mitigation priorities".to_string(),
             },
             PersonaInteraction {
-                target_persona: "DevOps".to_string(),
-                collaboration_contract: "Prepare pipeline and rollout".to_string(),
-                expected_handoff: "Deployment and monitoring artifacts".to_string(),
+                target_persona: "Software Engineer".to_string(),
+                collaboration_contract: "Drive defect prevention and testability improvements"
+                    .to_string(),
+                expected_handoff: "Defect findings and hardening recommendations".to_string(),
             },
         ],
         quality_criteria: vec![
-            "No functional regression".to_string(),
-            "Adequate test coverage".to_string(),
+            "Critical paths are covered by repeatable checks".to_string(),
+            "Quality decisions are evidence-backed".to_string(),
         ],
     }
 }
 
-fn ux_persona() -> Persona {
+fn user_experience_persona() -> Persona {
     Persona {
-        name: "UX".to_string(),
+        name: "User Experience".to_string(),
         purpose: "Ensure experience clarity and usability".to_string(),
         responsibilities: vec![
             "Design flows and interfaces".to_string(),
@@ -304,23 +320,24 @@ fn ux_persona() -> Persona {
         ],
         operational_instructions: vec![
             "Anticipate friction in user flows".to_string(),
-            "Align visual decisions with Product".to_string(),
+            "Align visual decisions with Project Manager priorities".to_string(),
         ],
         interaction_matrix: vec![
             PersonaInteraction {
-                target_persona: "Product".to_string(),
+                target_persona: "Maestro".to_string(),
+                collaboration_contract: "Report friction patterns requiring directive changes"
+                    .to_string(),
+                expected_handoff: "Experience findings and redesign proposals".to_string(),
+            },
+            PersonaInteraction {
+                target_persona: "Project Manager".to_string(),
                 collaboration_contract: "Refine value proposition".to_string(),
                 expected_handoff: "Prioritized usage scenarios".to_string(),
             },
             PersonaInteraction {
-                target_persona: "Engineering".to_string(),
+                target_persona: "Software Engineer".to_string(),
                 collaboration_contract: "Detail interface behavior".to_string(),
                 expected_handoff: "Implementable interaction specifications".to_string(),
-            },
-            PersonaInteraction {
-                target_persona: "DevOps".to_string(),
-                collaboration_contract: "Support progressive rollout".to_string(),
-                expected_handoff: "Friction signals for monitoring".to_string(),
             },
         ],
         quality_criteria: vec![
@@ -330,42 +347,45 @@ fn ux_persona() -> Persona {
     }
 }
 
-fn devops_persona() -> Persona {
+fn software_engineer_persona() -> Persona {
     Persona {
-        name: "DevOps".to_string(),
-        purpose: "Ensure reliable continuous delivery".to_string(),
+        name: "Software Engineer".to_string(),
+        purpose: "Implement architecture safely with language-agnostic engineering practices"
+            .to_string(),
         responsibilities: vec![
-            "Automate build and release".to_string(),
-            "Monitor operational health".to_string(),
+            "Design and implement modular solutions".to_string(),
+            "Maintain testing, observability, and maintainability baselines".to_string(),
         ],
         deliverables: vec![
-            "Validated pipeline".to_string(),
-            "Observability and rollback plan".to_string(),
+            "Working software increments".to_string(),
+            "Technical documentation and operational runbooks".to_string(),
         ],
         operational_instructions: vec![
-            "Reduce deployment risk with gradual strategy".to_string(),
-            "Ensure incident traceability".to_string(),
+            "Apply language-agnostic clean code and test-first discipline".to_string(),
+            "Surface trade-offs early and preserve architecture boundaries".to_string(),
         ],
         interaction_matrix: vec![
             PersonaInteraction {
-                target_persona: "Product".to_string(),
-                collaboration_contract: "Plan release windows and impact".to_string(),
-                expected_handoff: "Rollout status and risk".to_string(),
+                target_persona: "Maestro".to_string(),
+                collaboration_contract: "Request directive arbitration for architecture conflicts"
+                    .to_string(),
+                expected_handoff: "Implementation status and decision proposals".to_string(),
             },
             PersonaInteraction {
-                target_persona: "Engineering".to_string(),
-                collaboration_contract: "Standardize deployment operations".to_string(),
-                expected_handoff: "Applied infrastructure requirements".to_string(),
+                target_persona: "Project Manager".to_string(),
+                collaboration_contract: "Align implementation sequence with milestone scope"
+                    .to_string(),
+                expected_handoff: "Effort estimates and dependency risks".to_string(),
             },
             PersonaInteraction {
-                target_persona: "UX".to_string(),
-                collaboration_contract: "Monitor experience friction".to_string(),
-                expected_handoff: "Production usage metrics".to_string(),
+                target_persona: "Quality Assurance".to_string(),
+                collaboration_contract: "Increase testability and defect prevention".to_string(),
+                expected_handoff: "Build artifacts and verification hooks".to_string(),
             },
         ],
         quality_criteria: vec![
-            "Reproducible deployment".to_string(),
-            "Actionable observability".to_string(),
+            "Implementation remains language-agnostic and maintainable".to_string(),
+            "Regression risk is controlled by automated verification".to_string(),
         ],
     }
 }
@@ -387,7 +407,7 @@ mod tests {
     #[test]
     fn rejects_persona_without_interaction_matrix() {
         let invalid = Persona {
-            name: "Product".to_string(),
+            name: "Project Manager".to_string(),
             purpose: "x".to_string(),
             responsibilities: vec!["x".to_string()],
             deliverables: vec!["x".to_string()],
@@ -400,13 +420,13 @@ mod tests {
             personas: vec![
                 invalid,
                 Persona {
-                    name: "Engineering".to_string(),
+                    name: "Software Engineer".to_string(),
                     purpose: "x".to_string(),
                     responsibilities: vec!["x".to_string()],
                     deliverables: vec!["x".to_string()],
                     operational_instructions: vec!["x".to_string()],
                     interaction_matrix: vec![PersonaInteraction {
-                        target_persona: "Product".to_string(),
+                        target_persona: "Project Manager".to_string(),
                         collaboration_contract: "x".to_string(),
                         expected_handoff: "x".to_string(),
                     }],
@@ -422,14 +442,14 @@ mod tests {
             Err(PersonaError::MissingRequiredField {
                 persona,
                 field: "interaction_matrix"
-            }) if persona == "Product"
+            }) if persona == "Project Manager"
         ));
     }
 
     #[test]
     fn rejects_persona_with_invalid_interaction_target() {
         let invalid = Persona {
-            name: "Product".to_string(),
+            name: "Project Manager".to_string(),
             purpose: "x".to_string(),
             responsibilities: vec!["x".to_string()],
             deliverables: vec!["x".to_string()],
@@ -446,13 +466,13 @@ mod tests {
             personas: vec![
                 invalid,
                 Persona {
-                    name: "Engineering".to_string(),
+                    name: "Software Engineer".to_string(),
                     purpose: "x".to_string(),
                     responsibilities: vec!["x".to_string()],
                     deliverables: vec!["x".to_string()],
                     operational_instructions: vec!["x".to_string()],
                     interaction_matrix: vec![PersonaInteraction {
-                        target_persona: "Product".to_string(),
+                        target_persona: "Project Manager".to_string(),
                         collaboration_contract: "x".to_string(),
                         expected_handoff: "x".to_string(),
                     }],
@@ -466,7 +486,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(PersonaError::UnknownInteractionTarget { persona, target })
-            if persona == "Product" && target == "MissingPersona"
+            if persona == "Project Manager" && target == "MissingPersona"
         ));
     }
 }

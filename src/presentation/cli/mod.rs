@@ -679,30 +679,71 @@ fn scaffold_scope(governance: &MarkdownGovernance) -> Result<()> {
 }
 
 fn scaffold_personas(governance: &MarkdownGovernance) -> Result<()> {
-    let personas = ["maestro", "product", "engineering", "ux", "devops"];
-    for persona in personas {
+    let personas = [
+        (
+            "maestro",
+            "## Responsibility\nRule and orchestrate software-house directives\n\n## Deliverables\nGoverned persona, skill, and scope directives\n\n## Instructions\nOptimize prompts, enforce architecture boundaries, and coordinate launch strategy\n\n## Interaction Matrix\nMaestro -> Project Manager / Quality Assurance / User Experience / Software Engineer\n\n## Boundaries\nImmutable: this persona cannot be edited or archived\n",
+        ),
+        (
+            "project-manager",
+            "## Responsibility\nOwn milestone sequencing and delivery prioritization\n\n## Deliverables\nPrioritized backlog and acceptance-ready milestones\n\n## Instructions\nCoordinate scope with QA and Software Engineer while protecting user value\n\n## Interaction Matrix\nProject Manager -> Maestro / User Experience / Software Engineer\n\n## Boundaries\nDo not override Maestro governance decisions\n",
+        ),
+        (
+            "quality-assurance",
+            "## Responsibility\nDefine and enforce quality validation strategy\n\n## Deliverables\nRisk-based test plans and go/no-go quality reports\n\n## Instructions\nAutomate critical regressions and require evidence for release readiness\n\n## Interaction Matrix\nQuality Assurance -> Maestro / Project Manager / Software Engineer\n\n## Boundaries\nDo not approve releases without measurable acceptance evidence\n",
+        ),
+        (
+            "user-experience",
+            "## Responsibility\nDesign and validate user journeys for clarity and usability\n\n## Deliverables\nInteraction specifications and friction mitigation proposals\n\n## Instructions\nAlign usability outcomes with milestone priorities\n\n## Interaction Matrix\nUser Experience -> Maestro / Project Manager / Software Engineer\n\n## Boundaries\nDo not alter scope priorities without Project Manager alignment\n",
+        ),
+        (
+            "software-engineer",
+            "## Responsibility\nImplement architecture safely with language-agnostic engineering practices\n\n## Deliverables\nWorking increments, tests, and technical runbooks\n\n## Instructions\nApply clean architecture, test-first discipline, and explicit observability\n\n## Interaction Matrix\nSoftware Engineer -> Maestro / Project Manager / Quality Assurance\n\n## Boundaries\nDo not bypass quality gates or architecture constraints\n",
+        ),
+    ];
+    for (persona, content) in personas {
         let file = governance.personas_dir().join(format!("{persona}.md"));
         if !file.exists() {
-            fs::write(
-                file,
-                "## Responsibility\nDefine responsibility\n\n## Deliverables\nDefine deliverables\n\n## Instructions\nDefine instructions\n\n## Interaction Matrix\nDefine interactions\n\n## Boundaries\nDefine boundaries\n",
-            )?;
+            fs::write(file, content)?;
         }
     }
     Ok(())
 }
 
 fn scaffold_skills(governance: &MarkdownGovernance) -> Result<()> {
-    let personas = ["maestro", "product", "engineering", "ux", "devops"];
-    for persona in personas {
+    let personas = [
+        (
+            "maestro",
+            "README.md",
+            "## Objective\nGovern directive orchestration and prompt effectiveness\n\n## Triggers\nDirective create/update requests and cross-persona conflicts\n\n## Inputs\nProject intent, constraints, and quality evidence\n\n## Outputs\nApproved directives and handoff decisions\n\n## Constraints\nPersona is immutable and cannot be modified\n",
+        ),
+        (
+            "project-manager",
+            "delivery-planning.md",
+            "## Objective\nPlan milestone sequencing and launch readiness\n\n## Triggers\nNew scope proposals or delivery risk changes\n\n## Inputs\nBusiness goals, dependencies, and timeline constraints\n\n## Outputs\nPrioritized milestone plan and acceptance checklist\n\n## Constraints\nMust align with Maestro governance decisions\n",
+        ),
+        (
+            "quality-assurance",
+            "quality-gate-design.md",
+            "## Objective\nBuild risk-based quality gates for each increment\n\n## Triggers\nImplementation updates and release-candidate preparation\n\n## Inputs\nAcceptance criteria, test evidence, and defect trends\n\n## Outputs\nGo/no-go recommendation with traceable evidence\n\n## Constraints\nCannot approve release with missing critical evidence\n",
+        ),
+        (
+            "user-experience",
+            "journey-validation.md",
+            "## Objective\nValidate usability and reduce interaction friction\n\n## Triggers\nFeature proposals, UX regressions, or onboarding pain points\n\n## Inputs\nUser journeys, feedback, and usage observations\n\n## Outputs\nExperience recommendations and updated interaction guidance\n\n## Constraints\nMust keep changes aligned to approved scope priorities\n",
+        ),
+        (
+            "software-engineer",
+            "language-agnostic-engineering.md",
+            "## Objective\nDeliver maintainable software using language-agnostic practices\n\n## Triggers\nNew implementation tasks, refactoring, or architecture debt\n\n## Inputs\nScope directives, architecture constraints, and quality gates\n\n## Outputs\nWorking increments with tests and observability hooks\n\n## Constraints\nAvoid language-specific lock-in in general engineering guidance\n",
+        ),
+    ];
+    for (persona, file_name, content) in personas {
         let dir = governance.skills_dir().join(persona);
         fs::create_dir_all(&dir)?;
-        let file = dir.join("README.md");
+        let file = dir.join(file_name);
         if !file.exists() {
-            fs::write(
-                file,
-                "## Objective\nDescribe objective\n\n## Triggers\nDescribe triggers\n\n## Inputs\nDescribe inputs\n\n## Outputs\nDescribe outputs\n\n## Constraints\nDescribe constraints\n",
-            )?;
+            fs::write(file, content)?;
         }
     }
     Ok(())
@@ -816,7 +857,13 @@ mod tests {
         assert!(matches!(
             outcome,
             Ok(CliOutcome::AgentsListed(names))
-            if names == vec!["DevOps", "Engineering", "Maestro", "Product", "UX"]
+            if names == vec![
+                "Maestro",
+                "Project Manager",
+                "Quality Assurance",
+                "Software Engineer",
+                "User Experience"
+            ]
         ));
     }
 

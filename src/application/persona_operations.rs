@@ -208,7 +208,13 @@ mod tests {
     use super::*;
 
     async fn wait_until_default_personas_ready(runtime: &AgentRuntime) -> bool {
-        let expected = ["Maestro", "Product", "Engineering", "UX", "DevOps"];
+        let expected = [
+            "Maestro",
+            "Project Manager",
+            "Quality Assurance",
+            "User Experience",
+            "Software Engineer",
+        ];
 
         for _ in 0..80 {
             let snapshot = runtime.health_snapshot().await;
@@ -302,20 +308,29 @@ mod tests {
 
         assert!(senders.contains("user"));
         assert!(senders.contains("Maestro"));
-        assert!(senders.contains("Product"));
-        assert!(senders.contains("Engineering"));
-        assert!(senders.contains("UX"));
-        assert!(senders.contains("DevOps"));
+        assert!(senders.contains("Project Manager"));
+        assert!(senders.contains("Quality Assurance"));
+        assert!(senders.contains("User Experience"));
+        assert!(senders.contains("Software Engineer"));
 
         let health = runtime.health_snapshot().await;
         assert!(!matches!(health.get("Maestro"), Some(AgentHealth::Failed)));
-        assert!(!matches!(health.get("Product"), Some(AgentHealth::Failed)));
         assert!(!matches!(
-            health.get("Engineering"),
+            health.get("Project Manager"),
             Some(AgentHealth::Failed)
         ));
-        assert!(!matches!(health.get("UX"), Some(AgentHealth::Failed)));
-        assert!(!matches!(health.get("DevOps"), Some(AgentHealth::Failed)));
+        assert!(!matches!(
+            health.get("Quality Assurance"),
+            Some(AgentHealth::Failed)
+        ));
+        assert!(!matches!(
+            health.get("User Experience"),
+            Some(AgentHealth::Failed)
+        ));
+        assert!(!matches!(
+            health.get("Software Engineer"),
+            Some(AgentHealth::Failed)
+        ));
 
         let stopped = runtime.stop_all().await;
         assert!(stopped.is_ok());

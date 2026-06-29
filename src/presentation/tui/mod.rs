@@ -26,7 +26,7 @@ use uuid::Uuid;
 use crate::application::agent_runtime::{AgentHealth, AgentRuntime};
 use crate::application::config::DEFAULT_CONFIG_TEMPLATE;
 use crate::application::environment::Environment;
-use crate::application::markdown_governance::MarkdownGovernance;
+use crate::application::markdown_governance::{MarkdownGovernance, MAESTRO_PERSONA_FILE};
 use crate::application::project_deps::{ProjectDepsConfig, DEFAULT_PROJECT_DEPS_TEMPLATE};
 use crate::domain::models::message::Message;
 use crate::infrastructure::llm::gemini_adapter::GeminiAdapter;
@@ -43,6 +43,7 @@ pub enum UIMode {
     Workspace,
     HelpMenu,
     Interview,
+    Core,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -88,6 +89,144 @@ impl ReadinessAction {
     }
 }
 
+/// Directive families presented in Core Mode, grouped for the picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectiveGroup {
+    Personas,
+    Skills,
+    Scopes,
+}
+
+impl DirectiveGroup {
+    fn title(&self) -> &'static str {
+        match self {
+            DirectiveGroup::Personas => "Personas",
+            DirectiveGroup::Skills => "Skills",
+            DirectiveGroup::Scopes => "Scopes",
+        }
+    }
+}
+
+/// A selectable directive entry in the Core Mode picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CoreEntry {
+    group: DirectiveGroup,
+    label: String,
+    file_name: String,
+    persona: Option<String>,
+    read_only: bool,
+}
+
+impl CoreEntry {
+    /// Resolve the interview directive target this entry represents.
+    fn directive_target(&self) -> crate::application::interview_bot::DirectiveTarget {
+        use crate::application::interview_bot::DirectiveTarget;
+        match (&self.group, &self.persona) {
+            (DirectiveGroup::Personas, _) => DirectiveTarget::Persona {
+                name: directive_stem(&self.file_name),
+            },
+            (DirectiveGroup::Skills, Some(persona)) => DirectiveTarget::Skill {
+                persona: persona.clone(),
+                name: directive_stem(&self.file_name),
+            },
+            (DirectiveGroup::Skills, None) => DirectiveTarget::Skill {
+                persona: String::new(),
+                name: directive_stem(&self.file_name),
+            },
+            (DirectiveGroup::Scopes, _) => DirectiveTarget::Scope {
+                name: directive_stem(&self.file_name),
+            },
+        }
+    }
+}
+
+/// Interactive directives hub state for Core (Architect's) Mode.
+#[derive(Debug, Clone, Default)]
+struct CorePicker {
+    entries: Vec<CoreEntry>,
+    cursor: usize,
+}
+
+impl CorePicker {
+    /// Build the picker from on-disk governance state, grouped by directive type.
+    ///
+    /// Maestro persona and its skills are listed but flagged read-only so they
+    /// cannot be selected for mutation.
+    fn from_governance(governance: &MarkdownGovernance) -> Self {
+        let mut entries = Vec::new();
+
+        let personas = governance.list_personas().unwrap_or_default();
+        for file_name in &personas {
+            let read_only = is_maestro_directive_file(file_name);
+            entries.push(CoreEntry {
+                group: DirectiveGroup::Personas,
+                label: directive_stem(file_name),
+                file_name: file_name.clone(),
+                persona: None,
+                read_only,
+            });
+        }
+
+        for persona_file in &personas {
+            let persona_key = directive_stem(persona_file);
+            let read_only = is_maestro_directive_name(&persona_key);
+            let skills = governance.list_skills(&persona_key).unwrap_or_default();
+            for file_name in skills {
+                entries.push(CoreEntry {
+                    group: DirectiveGroup::Skills,
+                    label: format!("{}/{}", persona_key, directive_stem(&file_name)),
+                    file_name,
+                    persona: Some(persona_key.clone()),
+                    read_only,
+                });
+            }
+        }
+
+        for file_name in governance.list_scopes().unwrap_or_default() {
+            entries.push(CoreEntry {
+                group: DirectiveGroup::Scopes,
+                label: directive_stem(&file_name),
+                file_name,
+                persona: None,
+                read_only: false,
+            });
+        }
+
+        Self { entries, cursor: 0 }
+    }
+
+    fn move_up(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        if self.cursor + 1 < self.entries.len() {
+            self.cursor += 1;
+        }
+    }
+
+    fn selected(&self) -> Option<&CoreEntry> {
+        self.entries.get(self.cursor)
+    }
+}
+
+fn directive_stem(file_name: &str) -> String {
+    file_name
+        .strip_suffix(".md")
+        .unwrap_or(file_name)
+        .to_string()
+}
+
+fn is_maestro_directive_file(file_name: &str) -> bool {
+    file_name.eq_ignore_ascii_case(MAESTRO_PERSONA_FILE)
+}
+
+fn is_maestro_directive_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("maestro")
+}
+
 #[derive(Debug, Default)]
 pub struct TuiApp {
     pub agents: Vec<AgentView>,
@@ -111,6 +250,8 @@ pub struct TuiApp {
     maestro_message_id: Option<Uuid>,
     approval_modal_visible: bool,
     last_runtime_event_count: usize,
+    // Core (Architect's) Mode directives picker
+    core_picker: Option<CorePicker>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -167,6 +308,10 @@ impl TuiApp {
         self.logs
             .push("  /new skill     - Teach a new skill to an agent".to_string());
         self.logs
+            .push("  /core          - Open Core Mode directives hub (edit/archive)".to_string());
+        self.logs
+            .push("  /monitor       - Return to the runtime workspace monitor".to_string());
+        self.logs
             .push("  /deps          - Create/edit maestro project deps manifest".to_string());
         self.logs.push(String::new());
         self.logs.push("Check Status:".to_string());
@@ -199,6 +344,30 @@ impl TuiApp {
 
     pub fn return_to_workspace(&mut self) {
         self.mode = UIMode::Workspace;
+        self.core_picker = None;
+    }
+
+    /// Enter Core (Architect's) Mode and build the directives picker from disk.
+    fn enter_core_mode(&mut self, governance: &MarkdownGovernance) {
+        let picker = CorePicker::from_governance(governance);
+        let count = picker.entries.len();
+        self.core_picker = Some(picker);
+        self.mode = UIMode::Core;
+        self.logs.push(format!(
+            "\u{1f3db}\u{fe0f} Core Mode \u{2014} {count} directive(s). Up/Down navigate, Enter select, Esc back."
+        ));
+    }
+
+    /// Resolve the directive selected in the Core picker, if any.
+    ///
+    /// Returns `None` when the selection targets the immutable Maestro persona,
+    /// enforcing read-only at the presentation boundary (defense in depth).
+    fn core_selection_target(&self) -> Option<crate::application::interview_bot::DirectiveTarget> {
+        let entry = self.core_picker.as_ref()?.selected()?;
+        if entry.read_only {
+            return None;
+        }
+        Some(entry.directive_target())
     }
 
     fn toggle_focus(&mut self) {
@@ -593,6 +762,57 @@ impl TuiApp {
             }
         }
 
+        // Handle Core (Architect's) Mode directives picker
+        if self.mode == UIMode::Core {
+            match key.code {
+                KeyCode::Up => {
+                    if let Some(picker) = &mut self.core_picker {
+                        picker.move_up();
+                    }
+                    return None;
+                }
+                KeyCode::Down => {
+                    if let Some(picker) = &mut self.core_picker {
+                        picker.move_down();
+                    }
+                    return None;
+                }
+                KeyCode::Esc => {
+                    self.return_to_workspace();
+                    self.logs.push("🛰️ Workspace runtime monitor".to_string());
+                    return None;
+                }
+                KeyCode::Enter => {
+                    let selected = self
+                        .core_picker
+                        .as_ref()
+                        .and_then(|picker| picker.selected())
+                        .map(|entry| (entry.label.clone(), entry.read_only));
+                    match selected {
+                        None => {
+                            self.logs
+                                .push("Core Mode: no directive available to edit.".to_string());
+                        }
+                        Some((label, true)) => {
+                            self.logs.push(format!(
+                                "🔒 {label} is the immutable Maestro directive and cannot be edited or archived."
+                            ));
+                        }
+                        Some((label, false)) => {
+                            if let Some(target) = self.core_selection_target() {
+                                self.logs.push(format!(
+                                    "✏️ Selected {} directive: {label}. Opening guided editor.",
+                                    target.kind_label()
+                                ));
+                            }
+                        }
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+
         // Handle Interview mode
         if self.mode == UIMode::Interview {
             match key.code {
@@ -671,6 +891,15 @@ impl TuiApp {
                             self.logs.push(format!("wizard: {error}"));
                         }
                     }
+                    None
+                } else if command == "/core" {
+                    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                    let governance = MarkdownGovernance::new(root);
+                    self.enter_core_mode(&governance);
+                    None
+                } else if command == "/monitor" {
+                    self.return_to_workspace();
+                    self.logs.push("🛰️ Workspace runtime monitor".to_string());
                     None
                 } else if command == "/debug" {
                     self.show_debug = !self.show_debug;
@@ -1146,6 +1375,23 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         return;
     }
 
+    // Core (Architect's) Mode has a directives picker layout
+    if app.mode == UIMode::Core {
+        let core_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(8), // Logo
+                Constraint::Min(0),    // Directives picker
+                Constraint::Length(5), // Command input
+            ])
+            .split(area);
+
+        render_logo_panel(frame, core_rows[0]);
+        render_core_panel(frame, core_rows[1], app);
+        render_input_panel(frame, core_rows[2], app);
+        return;
+    }
+
     // Main vertical split: Top (Workspace + Sidebars) and Bottom (Gauge + Command)
     let main_rows = Layout::default()
         .direction(Direction::Vertical)
@@ -1227,6 +1473,52 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         .split(bottom_cols[1]);
 
     render_input_panel(frame, command_rows[1], app);
+}
+
+fn render_core_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
+    let mut lines = vec![
+        "Core Mode — Project Directives".to_string(),
+        "Up/Down navigate · Enter select · Esc back to monitor".to_string(),
+        String::new(),
+    ];
+
+    match &app.core_picker {
+        Some(picker) if !picker.entries.is_empty() => {
+            let mut current_group: Option<DirectiveGroup> = None;
+            for (index, entry) in picker.entries.iter().enumerate() {
+                if current_group != Some(entry.group) {
+                    if current_group.is_some() {
+                        lines.push(String::new());
+                    }
+                    lines.push(format!("[{}]", entry.group.title()));
+                    current_group = Some(entry.group);
+                }
+
+                let pointer = if index == picker.cursor { ">" } else { " " };
+                let lock = if entry.read_only {
+                    " 🔒 read-only"
+                } else {
+                    ""
+                };
+                lines.push(format!("{pointer} {}{lock}", entry.label));
+            }
+        }
+        _ => {
+            lines
+                .push("No directives yet. Use /new persona|scope|skill to author one.".to_string());
+        }
+    }
+
+    let paragraph = Paragraph::new(lines.join("\n"))
+        .style(Style::default().fg(Color::White))
+        .block(
+            Block::default()
+                .title("Core (Architect's) Mode")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+
+    frame.render_widget(paragraph, area);
 }
 
 fn render_readiness_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
@@ -1655,6 +1947,16 @@ pub enum WizardSubmission {
         file_name: String,
         content: String,
     },
+    ArchivePersona {
+        file_name: String,
+    },
+    ArchiveScope {
+        file_name: String,
+    },
+    ArchiveSkill {
+        persona_name: String,
+        file_name: String,
+    },
 }
 
 enum WizardAdvance {
@@ -1920,6 +2222,21 @@ fn persist_submission(
             }
             std::fs::write(&path, content)?;
             path
+        }
+        WizardSubmission::ArchivePersona { file_name } => {
+            let path = governance.personas_dir().join(file_name);
+            governance.archive_document(&path)?
+        }
+        WizardSubmission::ArchiveScope { file_name } => {
+            let path = governance.scopes_dir().join(file_name);
+            governance.archive_document(&path)?
+        }
+        WizardSubmission::ArchiveSkill {
+            persona_name,
+            file_name,
+        } => {
+            let path = governance.skills_dir().join(persona_name).join(file_name);
+            governance.archive_document(&path)?
         }
     };
 
@@ -2327,6 +2644,7 @@ mod tests {
             maestro_message_id: None,
             approval_modal_visible: false,
             last_runtime_event_count: 0,
+            core_picker: None,
         };
 
         let drawn = terminal.draw(|frame| render(frame, &app));
@@ -2886,6 +3204,218 @@ mod tests {
             .flatten()
             .collect::<Vec<_>>();
         assert!(scopes.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_archive_persona_moves_document_into_archive_tree() {
+        let root = temp_root("maestro-archive-persona");
+        let governance = MarkdownGovernance::new(&root);
+        let ensured = governance.ensure_directories();
+        assert!(ensured.is_ok());
+
+        let persona_path = governance.personas_dir().join("project-manager.md");
+        let write = fs::write(&persona_path, "## Responsibility\nPlan delivery\n");
+        assert!(write.is_ok());
+
+        let result = persist_submission(
+            &governance,
+            WizardSubmission::ArchivePersona {
+                file_name: "project-manager.md".to_string(),
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(!persona_path.exists());
+        let archived = governance
+            .archive_dir()
+            .join("personas")
+            .join("project-manager.md");
+        assert!(archived.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_archive_rejects_immutable_maestro_persona() {
+        let root = temp_root("maestro-archive-immutable");
+        let governance = MarkdownGovernance::new(&root);
+        let ensured = governance.ensure_directories();
+        assert!(ensured.is_ok());
+
+        let maestro_path = governance.personas_dir().join("maestro.md");
+        let write = fs::write(&maestro_path, "## Responsibility\nOrchestrate\n");
+        assert!(write.is_ok());
+
+        let result = persist_submission(
+            &governance,
+            WizardSubmission::ArchivePersona {
+                file_name: "maestro.md".to_string(),
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(maestro_path.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_archive_skill_moves_document_into_archive_tree() {
+        let root = temp_root("maestro-archive-skill");
+        let governance = MarkdownGovernance::new(&root);
+        let ensured = governance.ensure_directories();
+        assert!(ensured.is_ok());
+
+        let skill_dir = governance.skills_dir().join("software-engineer");
+        let create_dir = fs::create_dir_all(&skill_dir);
+        assert!(create_dir.is_ok());
+        let skill_path = skill_dir.join("refactoring.md");
+        let write = fs::write(&skill_path, "## Objective\nImprove design\n");
+        assert!(write.is_ok());
+
+        let result = persist_submission(
+            &governance,
+            WizardSubmission::ArchiveSkill {
+                persona_name: "software-engineer".to_string(),
+                file_name: "refactoring.md".to_string(),
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(!skill_path.exists());
+        let archived = governance
+            .archive_dir()
+            .join("skills")
+            .join("software-engineer")
+            .join("refactoring.md");
+        assert!(archived.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn seed_core_directives(governance: &MarkdownGovernance) {
+        let ensured = governance.ensure_directories();
+        assert!(ensured.is_ok());
+
+        let maestro = fs::write(
+            governance.personas_dir().join("maestro.md"),
+            "## Responsibility\nOrchestrate\n",
+        );
+        assert!(maestro.is_ok());
+        let pm = fs::write(
+            governance.personas_dir().join("project-manager.md"),
+            "## Responsibility\nPlan\n",
+        );
+        assert!(pm.is_ok());
+
+        let maestro_skill_dir = governance.skills_dir().join("maestro");
+        assert!(fs::create_dir_all(&maestro_skill_dir).is_ok());
+        assert!(fs::write(
+            maestro_skill_dir.join("observability.md"),
+            "## Objective\nObserve\n"
+        )
+        .is_ok());
+
+        let pm_skill_dir = governance.skills_dir().join("project-manager");
+        assert!(fs::create_dir_all(&pm_skill_dir).is_ok());
+        assert!(fs::write(pm_skill_dir.join("planning.md"), "## Objective\nPlan\n").is_ok());
+
+        assert!(fs::write(
+            governance.scopes_dir().join("001-backend.md"),
+            "## Objective\nBackend\n"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn core_picker_groups_directives_and_flags_maestro_read_only() {
+        let root = temp_root("maestro-core-picker");
+        let governance = MarkdownGovernance::new(&root);
+        seed_core_directives(&governance);
+
+        let picker = CorePicker::from_governance(&governance);
+
+        let maestro_persona = picker
+            .entries
+            .iter()
+            .find(|e| e.group == DirectiveGroup::Personas && e.file_name == "maestro.md")
+            .expect("maestro persona entry present");
+        assert!(maestro_persona.read_only);
+
+        let pm_persona = picker
+            .entries
+            .iter()
+            .find(|e| e.group == DirectiveGroup::Personas && e.file_name == "project-manager.md")
+            .expect("project-manager persona entry present");
+        assert!(!pm_persona.read_only);
+
+        let maestro_skill = picker
+            .entries
+            .iter()
+            .find(|e| e.group == DirectiveGroup::Skills && e.persona.as_deref() == Some("maestro"))
+            .expect("maestro skill entry present");
+        assert!(maestro_skill.read_only);
+
+        let scope = picker
+            .entries
+            .iter()
+            .find(|e| e.group == DirectiveGroup::Scopes)
+            .expect("scope entry present");
+        assert!(!scope.read_only);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn core_selection_target_blocks_maestro_and_resolves_others() {
+        let root = temp_root("maestro-core-selection");
+        let governance = MarkdownGovernance::new(&root);
+        seed_core_directives(&governance);
+
+        let mut app = TuiApp {
+            core_picker: Some(CorePicker::from_governance(&governance)),
+            mode: UIMode::Core,
+            ..TuiApp::default()
+        };
+
+        // Cursor starts at the first entry (maestro persona, read-only).
+        assert!(app.core_selection_target().is_none());
+
+        // Move to the first non-read-only entry and confirm it resolves.
+        if let Some(picker) = &mut app.core_picker {
+            while picker
+                .selected()
+                .map(|entry| entry.read_only)
+                .unwrap_or(false)
+            {
+                let before = picker.cursor;
+                picker.move_down();
+                if picker.cursor == before {
+                    break;
+                }
+            }
+        }
+        assert!(app.core_selection_target().is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn core_command_enters_mode_and_monitor_returns_to_workspace() {
+        let root = temp_root("maestro-core-command");
+        let governance = MarkdownGovernance::new(&root);
+        seed_core_directives(&governance);
+
+        let mut app = TuiApp::default();
+        app.enter_core_mode(&governance);
+        assert_eq!(app.mode, UIMode::Core);
+        assert!(app.core_picker.is_some());
+
+        app.return_to_workspace();
+        assert_eq!(app.mode, UIMode::Workspace);
+        assert!(app.core_picker.is_none());
 
         let _ = fs::remove_dir_all(root);
     }

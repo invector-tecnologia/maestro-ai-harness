@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::SystemTime;
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::application::persona_operations::PersonaRuntimeRole;
@@ -15,6 +16,102 @@ pub struct InterviewExchange {
     pub timestamp: SystemTime,
 }
 
+/// Directive operation requested through Core Mode and authored via Interview Mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DirectiveOperation {
+    #[default]
+    Create,
+    Edit,
+    Update,
+    Delete,
+}
+
+impl DirectiveOperation {
+    /// Human-readable label used in prompts, logs, and error messages.
+    pub fn label(&self) -> &'static str {
+        match self {
+            DirectiveOperation::Create => "create",
+            DirectiveOperation::Edit => "edit",
+            DirectiveOperation::Update => "update",
+            DirectiveOperation::Delete => "delete",
+        }
+    }
+
+    /// Whether the operation needs an existing directive loaded before authoring.
+    pub fn requires_existing_target(&self) -> bool {
+        matches!(
+            self,
+            DirectiveOperation::Edit | DirectiveOperation::Update | DirectiveOperation::Delete
+        )
+    }
+}
+
+/// Directive target a Core Mode operation acts upon.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectiveTarget {
+    Persona { name: String },
+    Skill { persona: String, name: String },
+    Scope { name: String },
+}
+
+impl DirectiveTarget {
+    /// Directive kind label used for grouping and messaging.
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            DirectiveTarget::Persona { .. } => "persona",
+            DirectiveTarget::Skill { .. } => "skill",
+            DirectiveTarget::Scope { .. } => "scope",
+        }
+    }
+
+    /// Whether this target resolves to the immutable Maestro persona or its skills.
+    pub fn targets_maestro(&self) -> bool {
+        match self {
+            DirectiveTarget::Persona { name } => is_maestro_identity(name),
+            DirectiveTarget::Skill { persona, .. } => is_maestro_identity(persona),
+            DirectiveTarget::Scope { .. } => false,
+        }
+    }
+}
+
+fn is_maestro_identity(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.eq_ignore_ascii_case("maestro") || trimmed.eq_ignore_ascii_case("maestro.md")
+}
+
+/// Errors raised when validating a requested directive operation.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum DirectiveOperationError {
+    #[error("Maestro persona is immutable and cannot be the target of {operation} operations")]
+    ImmutableMaestro { operation: &'static str },
+    #[error("{operation} requires an existing target directive to be selected first")]
+    MissingExistingTarget { operation: &'static str },
+}
+
+/// Validate a directive operation before any interview authoring begins.
+///
+/// Enforces Maestro immutability (no create/edit/update/delete may target Maestro)
+/// and ensures mutation-of-existing operations carry a selected target file.
+pub fn validate_directive_operation(
+    operation: DirectiveOperation,
+    target: &DirectiveTarget,
+    target_file: Option<&str>,
+) -> Result<(), DirectiveOperationError> {
+    if target.targets_maestro() {
+        return Err(DirectiveOperationError::ImmutableMaestro {
+            operation: operation.label(),
+        });
+    }
+
+    if operation.requires_existing_target() && target_file.unwrap_or("").trim().is_empty() {
+        return Err(DirectiveOperationError::MissingExistingTarget {
+            operation: operation.label(),
+        });
+    }
+
+    Ok(())
+}
+
 /// Collected project needs extracted from interview responses
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersonaNeeds {
@@ -23,7 +120,7 @@ pub struct PersonaNeeds {
     pub team_size: String,    // e.g., "Solo", "Small (3-5)", "Large (10+)"
     pub pain_points: Vec<String>,
     pub tech_stack: Vec<String>,
-    pub recommended_personas: Vec<String>, // e.g., ["Product", "Engineering", "DevOps"]
+    pub recommended_personas: Vec<String>, // e.g., ["Project Manager", "Software Engineer"]
     pub recommended_skills: Vec<(String, String)>, // (persona_name, skill_name)
     pub recommended_scopes: Vec<String>,
     pub rag_domains: Vec<String>,
@@ -48,6 +145,10 @@ pub struct InterviewSession {
     pub proposed_changes: Option<ProposedChanges>,
     pub approval_pending: bool,
     pub session_start: SystemTime,
+    pub operation: DirectiveOperation,
+    pub target: Option<DirectiveTarget>,
+    pub target_file: Option<String>,
+    pub existing_content: Option<String>,
 }
 
 impl Default for InterviewSession {
@@ -59,7 +160,31 @@ impl Default for InterviewSession {
             proposed_changes: None,
             approval_pending: false,
             session_start: SystemTime::now(),
+            operation: DirectiveOperation::Create,
+            target: None,
+            target_file: None,
+            existing_content: None,
         }
+    }
+}
+
+impl InterviewSession {
+    /// Build a directive-scoped session for a validated Core Mode operation.
+    pub fn for_directive(
+        operation: DirectiveOperation,
+        target: DirectiveTarget,
+        target_file: Option<String>,
+        existing_content: Option<String>,
+    ) -> Result<Self, DirectiveOperationError> {
+        validate_directive_operation(operation, &target, target_file.as_deref())?;
+
+        Ok(Self {
+            operation,
+            target: Some(target),
+            target_file,
+            existing_content,
+            ..Self::default()
+        })
     }
 }
 
@@ -206,16 +331,30 @@ impl InterviewBot {
 
         // Recommend personas based on extracted needs
         if !needs.tech_stack.is_empty() {
-            needs.recommended_personas.push("Engineering".to_string());
+            needs
+                .recommended_personas
+                .push("Software Engineer".to_string());
         }
         if needs.project_type.contains("SaaS") {
-            needs.recommended_personas.push("Product".to_string());
+            needs
+                .recommended_personas
+                .push("Project Manager".to_string());
         }
         if needs.pain_points.iter().any(|p| p.contains("Scalability")) {
-            needs.recommended_personas.push("DevOps".to_string());
+            needs
+                .recommended_personas
+                .push("Quality Assurance".to_string());
         }
         if needs.project_type != "Research/POC" {
-            needs.recommended_personas.push("UX".to_string());
+            needs
+                .recommended_personas
+                .push("User Experience".to_string());
+        }
+
+        if needs.recommended_personas.is_empty() {
+            needs
+                .recommended_personas
+                .push("Project Manager".to_string());
         }
 
         // Deduplicate personas
@@ -264,9 +403,10 @@ impl InterviewBot {
                 needs.project_type,
                 persona_name
             );
-            proposals
-                .persona_drafts
-                .push((format!("{}.md", persona_name.to_lowercase()), markdown));
+            proposals.persona_drafts.push((
+                format!("{}.md", slugify_persona_name(persona_name)),
+                markdown,
+            ));
         }
 
         // Generate scope template
@@ -280,6 +420,10 @@ impl InterviewBot {
 
         Ok(proposals)
     }
+}
+
+fn slugify_persona_name(name: &str) -> String {
+    name.trim().to_lowercase().replace(' ', "-")
 }
 
 impl Default for InterviewBot {
@@ -317,5 +461,108 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(needs.pain_points.len(), 2);
+    }
+    #[test]
+    fn directive_operation_exposes_labels_and_existing_target_rules() {
+        assert_eq!(DirectiveOperation::Create.label(), "create");
+        assert_eq!(DirectiveOperation::Edit.label(), "edit");
+        assert_eq!(DirectiveOperation::Update.label(), "update");
+        assert_eq!(DirectiveOperation::Delete.label(), "delete");
+        assert!(!DirectiveOperation::Create.requires_existing_target());
+        assert!(DirectiveOperation::Edit.requires_existing_target());
+        assert!(DirectiveOperation::Update.requires_existing_target());
+        assert!(DirectiveOperation::Delete.requires_existing_target());
+    }
+
+    #[test]
+    fn directive_target_detects_maestro_identity_case_insensitively() {
+        assert!(DirectiveTarget::Persona {
+            name: "Maestro".to_string(),
+        }
+        .targets_maestro());
+        assert!(DirectiveTarget::Skill {
+            persona: "maestro".to_string(),
+            name: "prompt-optimization".to_string(),
+        }
+        .targets_maestro());
+        assert!(!DirectiveTarget::Persona {
+            name: "Software Engineer".to_string(),
+        }
+        .targets_maestro());
+        assert!(!DirectiveTarget::Scope {
+            name: "backend".to_string(),
+        }
+        .targets_maestro());
+    }
+
+    #[test]
+    fn validate_directive_operation_rejects_maestro_mutation() {
+        for operation in [
+            DirectiveOperation::Create,
+            DirectiveOperation::Edit,
+            DirectiveOperation::Update,
+            DirectiveOperation::Delete,
+        ] {
+            let target = DirectiveTarget::Persona {
+                name: "Maestro".to_string(),
+            };
+            let result = validate_directive_operation(operation, &target, Some("maestro.md"));
+            assert_eq!(
+                result,
+                Err(DirectiveOperationError::ImmutableMaestro {
+                    operation: operation.label(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn validate_directive_operation_requires_existing_target_for_mutations() {
+        let target = DirectiveTarget::Persona {
+            name: "Project Manager".to_string(),
+        };
+        let result = validate_directive_operation(DirectiveOperation::Edit, &target, None);
+        assert_eq!(
+            result,
+            Err(DirectiveOperationError::MissingExistingTarget { operation: "edit" })
+        );
+    }
+
+    #[test]
+    fn for_directive_builds_session_for_valid_non_maestro_operation() {
+        let session = InterviewSession::for_directive(
+            DirectiveOperation::Update,
+            DirectiveTarget::Persona {
+                name: "Quality Assurance".to_string(),
+            },
+            Some("quality-assurance.md".to_string()),
+            Some("# Quality Assurance".to_string()),
+        )
+        .expect("valid non-maestro operation should build a session");
+
+        assert_eq!(session.operation, DirectiveOperation::Update);
+        assert_eq!(session.target_file.as_deref(), Some("quality-assurance.md"));
+        assert!(session.target.is_some());
+        assert_eq!(session.turn_count, 0);
+    }
+
+    #[test]
+    fn for_directive_rejects_maestro_skill_target() {
+        let result = InterviewSession::for_directive(
+            DirectiveOperation::Delete,
+            DirectiveTarget::Skill {
+                persona: "Maestro".to_string(),
+                name: "observability".to_string(),
+            },
+            Some("observability.md".to_string()),
+            None,
+        );
+
+        assert_eq!(
+            result.err(),
+            Some(DirectiveOperationError::ImmutableMaestro {
+                operation: "delete",
+            })
+        );
     }
 }

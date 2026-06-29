@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -7,6 +8,8 @@ pub const MAESTRO_DIR: &str = "maestro";
 pub const SCOPES_DIR: &str = "scopes";
 pub const PERSONAS_DIR: &str = "personas";
 pub const SKILLS_DIR: &str = "skills";
+pub const ARCHIVE_DIR: &str = "archive";
+pub const MAESTRO_PERSONA_FILE: &str = "maestro.md";
 
 #[derive(Debug, Error)]
 pub enum MarkdownGovernanceError {
@@ -23,6 +26,10 @@ pub enum MarkdownGovernanceError {
     InvalidMarkdownFileName(String),
     #[error("Invalid persona name: {0}")]
     InvalidPersonaName(String),
+    #[error("Invalid document path: {0}")]
+    InvalidDocumentPath(String),
+    #[error("Immutable persona cannot be modified: {0}")]
+    ImmutablePersona(String),
     #[error("I/O error in markdown governance")]
     Io(#[from] std::io::Error),
 }
@@ -40,7 +47,56 @@ impl MarkdownGovernance {
         fs::create_dir_all(self.scopes_dir())?;
         fs::create_dir_all(self.personas_dir())?;
         fs::create_dir_all(self.skills_dir())?;
+        fs::create_dir_all(self.archive_dir())?;
         Ok(())
+    }
+
+    pub fn list_scopes(&self) -> Result<Vec<String>, MarkdownGovernanceError> {
+        self.list_markdown_file_names(&self.scopes_dir())
+    }
+
+    pub fn list_personas(&self) -> Result<Vec<String>, MarkdownGovernanceError> {
+        self.list_markdown_file_names(&self.personas_dir())
+    }
+
+    pub fn list_skills(&self, persona_name: &str) -> Result<Vec<String>, MarkdownGovernanceError> {
+        validate_persona_name(persona_name)?;
+        self.list_markdown_file_names(&self.skills_dir().join(persona_name))
+    }
+
+    pub fn read_document(&self, path: &Path) -> Result<String, MarkdownGovernanceError> {
+        let normalized = self.normalize_document_path(path)?;
+        if normalized.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            return Err(MarkdownGovernanceError::InvalidDocumentPath(
+                normalized.display().to_string(),
+            ));
+        }
+
+        Ok(fs::read_to_string(normalized)?)
+    }
+
+    pub fn archive_document(&self, path: &Path) -> Result<PathBuf, MarkdownGovernanceError> {
+        let normalized = self.normalize_document_path(path)?;
+        if normalized.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            return Err(MarkdownGovernanceError::InvalidDocumentPath(
+                normalized.display().to_string(),
+            ));
+        }
+
+        self.reject_immutable_target(&normalized)?;
+
+        let maestro_root = self.root.join(MAESTRO_DIR);
+        let relative = normalized.strip_prefix(&maestro_root).map_err(|_| {
+            MarkdownGovernanceError::InvalidDocumentPath(normalized.display().to_string())
+        })?;
+
+        let destination = self.archive_dir().join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(&normalized, &destination)?;
+
+        Ok(destination)
     }
 
     pub fn validate_scope_document(
@@ -93,6 +149,11 @@ impl MarkdownGovernance {
         content: &str,
     ) -> Result<PathBuf, MarkdownGovernanceError> {
         validate_markdown_file_name(persona_file_name)?;
+        if is_maestro_persona_file(persona_file_name) {
+            return Err(MarkdownGovernanceError::ImmutablePersona(
+                persona_file_name.to_string(),
+            ));
+        }
         validate_required_fields(
             "persona",
             content,
@@ -132,6 +193,11 @@ impl MarkdownGovernance {
         content: &str,
     ) -> Result<PathBuf, MarkdownGovernanceError> {
         validate_persona_name(persona_name)?;
+        if is_maestro_persona_name(persona_name) {
+            return Err(MarkdownGovernanceError::ImmutablePersona(
+                persona_name.to_string(),
+            ));
+        }
         validate_markdown_file_name(skill_file_name)?;
         validate_required_fields(
             "skill",
@@ -188,6 +254,96 @@ impl MarkdownGovernance {
     pub fn skills_dir(&self) -> PathBuf {
         self.root.join(MAESTRO_DIR).join(SKILLS_DIR)
     }
+
+    pub fn archive_dir(&self) -> PathBuf {
+        self.root.join(MAESTRO_DIR).join(ARCHIVE_DIR)
+    }
+
+    fn list_markdown_file_names(
+        &self,
+        directory: &Path,
+    ) -> Result<Vec<String>, MarkdownGovernanceError> {
+        if !directory.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut files = Vec::new();
+        for entry in fs::read_dir(directory)? {
+            let dir_entry = entry?;
+            let path = dir_entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                continue;
+            }
+            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                files.push(name.to_string());
+            }
+        }
+
+        files.sort();
+        Ok(files)
+    }
+
+    fn normalize_document_path(&self, path: &Path) -> Result<PathBuf, MarkdownGovernanceError> {
+        let normalized = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root.join(path)
+        };
+
+        if !normalized.starts_with(self.root.join(MAESTRO_DIR)) {
+            return Err(MarkdownGovernanceError::InvalidDocumentPath(
+                path.display().to_string(),
+            ));
+        }
+
+        Ok(normalized)
+    }
+
+    fn reject_immutable_target(&self, path: &Path) -> Result<(), MarkdownGovernanceError> {
+        let maestro_root = self.root.join(MAESTRO_DIR);
+        let relative = path.strip_prefix(&maestro_root).map_err(|_| {
+            MarkdownGovernanceError::InvalidDocumentPath(path.display().to_string())
+        })?;
+
+        let mut components = relative.components();
+        let first = components
+            .next()
+            .and_then(|c| c.as_os_str().to_str())
+            .unwrap_or_default();
+
+        if first == PERSONAS_DIR {
+            if let Some(file_name) = components.next().and_then(|c| c.as_os_str().to_str()) {
+                if is_maestro_persona_file(file_name) {
+                    return Err(MarkdownGovernanceError::ImmutablePersona(
+                        file_name.to_string(),
+                    ));
+                }
+            }
+        }
+
+        if first == SKILLS_DIR {
+            if let Some(persona_name) = components.next().and_then(|c| c.as_os_str().to_str()) {
+                if is_maestro_persona_name(persona_name) {
+                    return Err(MarkdownGovernanceError::ImmutablePersona(
+                        persona_name.to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn is_maestro_persona_name(persona_name: &str) -> bool {
+    persona_name.trim().eq_ignore_ascii_case("maestro")
+}
+
+fn is_maestro_persona_file(file_name: &str) -> bool {
+    file_name.trim().eq_ignore_ascii_case(MAESTRO_PERSONA_FILE)
 }
 
 fn validate_scope_file_name(file_name: &str) -> Result<(), MarkdownGovernanceError> {
@@ -302,6 +458,7 @@ mod tests {
         assert!(governance.scopes_dir().exists());
         assert!(governance.personas_dir().exists());
         assert!(governance.skills_dir().exists());
+        assert!(governance.archive_dir().exists());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -481,6 +638,113 @@ mod tests {
         let res = governance.validate_skill_document("engenharia", "code-review.md", content);
 
         assert!(res.is_ok());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lists_personas_scopes_and_skills_sorted() {
+        let root = unique_root();
+        let governance = MarkdownGovernance::new(&root);
+        assert!(governance.ensure_directories().is_ok());
+
+        assert!(fs::write(governance.personas_dir().join("ux.md"), persona_content()).is_ok());
+        assert!(fs::write(governance.personas_dir().join("qa.md"), persona_content()).is_ok());
+        assert!(fs::write(governance.scopes_dir().join("002-beta.md"), scope_content()).is_ok());
+        assert!(fs::write(
+            governance.scopes_dir().join("001-alpha.md"),
+            scope_content()
+        )
+        .is_ok());
+
+        let skill_dir = governance.skills_dir().join("qa");
+        assert!(fs::create_dir_all(&skill_dir).is_ok());
+        assert!(fs::write(skill_dir.join("checklists.md"), skill_content()).is_ok());
+        assert!(fs::write(skill_dir.join("automation.md"), skill_content()).is_ok());
+
+        let personas = governance.list_personas();
+        assert!(personas.is_ok());
+        assert_eq!(personas.unwrap_or_default(), vec!["qa.md", "ux.md"]);
+
+        let scopes = governance.list_scopes();
+        assert!(scopes.is_ok());
+        assert_eq!(
+            scopes.unwrap_or_default(),
+            vec!["001-alpha.md", "002-beta.md"]
+        );
+
+        let skills = governance.list_skills("qa");
+        assert!(skills.is_ok());
+        assert_eq!(
+            skills.unwrap_or_default(),
+            vec!["automation.md", "checklists.md"]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_document_under_maestro_tree() {
+        let root = unique_root();
+        let governance = MarkdownGovernance::new(&root);
+        assert!(governance.ensure_directories().is_ok());
+
+        let path = governance.personas_dir().join("qa.md");
+        assert!(fs::write(&path, persona_content()).is_ok());
+
+        let read = governance.read_document(&path);
+        assert!(read.is_ok());
+        assert!(read.unwrap_or_default().contains("## Responsibility"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archives_non_immutable_document_to_archive_tree() {
+        let root = unique_root();
+        let governance = MarkdownGovernance::new(&root);
+        assert!(governance.ensure_directories().is_ok());
+
+        let path = governance.personas_dir().join("qa.md");
+        assert!(fs::write(&path, persona_content()).is_ok());
+
+        let archived = governance.archive_document(&path);
+        assert!(archived.is_ok());
+        let archived_path = archived.unwrap_or_else(|_| governance.archive_dir());
+        assert!(!path.exists());
+        assert!(archived_path.exists());
+        assert!(archived_path.starts_with(governance.archive_dir().join(PERSONAS_DIR)));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_mutating_maestro_persona_and_skills() {
+        let root = unique_root();
+        let governance = MarkdownGovernance::new(&root);
+
+        let persona_res = governance.validate_persona_document("maestro.md", persona_content());
+        assert!(matches!(
+            persona_res,
+            Err(MarkdownGovernanceError::ImmutablePersona(_))
+        ));
+
+        let skill_res =
+            governance.validate_skill_document("maestro", "routing.md", skill_content());
+        assert!(matches!(
+            skill_res,
+            Err(MarkdownGovernanceError::ImmutablePersona(_))
+        ));
+
+        assert!(governance.ensure_directories().is_ok());
+        let maestro_file = governance.personas_dir().join("maestro.md");
+        assert!(fs::write(&maestro_file, persona_content()).is_ok());
+
+        let archive_res = governance.archive_document(&maestro_file);
+        assert!(matches!(
+            archive_res,
+            Err(MarkdownGovernanceError::ImmutablePersona(_))
+        ));
 
         let _ = fs::remove_dir_all(root);
     }
