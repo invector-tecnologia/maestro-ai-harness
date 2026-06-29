@@ -1064,4 +1064,71 @@ mod tests {
         let cli = Cli::parse_from(["maestro"]);
         assert!(cli.command.is_none());
     }
+
+    #[test]
+    fn shipped_default_skills_and_scope_pass_governance_validation() {
+        let root = std::env::temp_dir().join(format!("maestro-scaffold-{}", Uuid::new_v4()));
+        let governance = MarkdownGovernance::new(&root);
+        governance
+            .ensure_directories()
+            .expect("ensure governance directories");
+        scaffold_personas(&governance).expect("scaffold personas");
+        scaffold_skills(&governance).expect("scaffold skills");
+        scaffold_scope(&governance).expect("scaffold scope");
+
+        // Every non-Maestro persona ships a skill that passes governance validation.
+        let mut validated_skills = 0_usize;
+        for persona_file in governance.list_personas().expect("list personas") {
+            let slug = persona_file
+                .strip_suffix(".md")
+                .unwrap_or(&persona_file)
+                .to_string();
+            if slug.eq_ignore_ascii_case("maestro") {
+                // Maestro is immutable: governance rejects skill mutation by design.
+                continue;
+            }
+            for skill_file in governance.list_skills(&slug).expect("list skills") {
+                let path = governance.skills_dir().join(&slug).join(&skill_file);
+                let content = governance.read_document(&path).expect("read skill");
+                let result = governance.validate_skill_document(&slug, &skill_file, &content);
+                assert!(
+                    result.is_ok(),
+                    "skill {}/{} must validate: {:?}",
+                    slug,
+                    skill_file,
+                    result
+                );
+                validated_skills += 1;
+            }
+        }
+        assert!(
+            validated_skills >= 4,
+            "expected at least four worker skills, found {}",
+            validated_skills
+        );
+
+        // The default scope ships with the canonical schema; validate its content
+        // in a fresh empty workspace so the sequence check treats it as first.
+        let scopes = governance.list_scopes().expect("list scopes");
+        assert!(!scopes.is_empty(), "expected a default scope");
+        let fresh_root = std::env::temp_dir().join(format!("maestro-scope-{}", Uuid::new_v4()));
+        let fresh = MarkdownGovernance::new(&fresh_root);
+        fresh
+            .ensure_directories()
+            .expect("ensure fresh directories");
+        for scope_file in scopes {
+            let path = governance.scopes_dir().join(&scope_file);
+            let content = governance.read_document(&path).expect("read scope");
+            let result = fresh.validate_scope_document(&scope_file, &content);
+            assert!(
+                result.is_ok(),
+                "scope {} must validate: {:?}",
+                scope_file,
+                result
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(fresh_root);
+    }
 }
