@@ -35,6 +35,18 @@ maestro onboarding --mode fast --config ~/.config/maestro/config.yml
 
 Fast mode skips the guided interview and uses defaults when the workspace is already close to ready.
 
+## Onboarding Engines (Model-Availability SENSE)
+Maestro probes the configured default provider before the interview and picks an engine
+automatically:
+- **LLM-driven interview (model online):** a single cognitive voice runs the interview
+  and authors scope, persona, and skill files through markdown governance.
+- **Guided setup (model offline):** when no model is reachable, Maestro lists the steps
+  to bring a provider online and re-senses on the next start, auto-promoting to the
+  LLM-driven interview once a model is available.
+
+The active engine and model online/offline state are shown in the Maestro panel status
+line.
+
 ## Validations
 - Required fields block progress.
 - Scope requires a 3-digit numeric prefix (for example: `001`).

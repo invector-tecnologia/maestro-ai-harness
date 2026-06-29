@@ -198,6 +198,12 @@ _To be filled at completion of each increment with executed commands and outcome
   canonical `SENSE → OBSERVE → THINK → ACT → AUDIT → DELIVER` cycle and its code map.
   Linked it from `docs/Maestro_Manifesto/ARCHITECTURE.md` (new section 3) and
   `docs/Maestro_Manifesto/reference/00_INDEX.md` (docs sync).
+* User-facing docs synced to the shipped behavior: dual-engine onboarding
+  (model-availability SENSE) sections added to
+  `docs/Practical_Guides/USER_ONBOARDING.md` and
+  `docs/Practical_Guides/PROJECT_ONBOARDING.md`; the orchestration `sense` phase added
+  to the Workspace Mode and Orchestration panel descriptions in
+  `docs/User_Manual/COMMANDS_AND_PANELS.md`.
 * `cargo fmt --all` — clean.
 * `cargo clippy --all-targets -- -D warnings` — no warnings.
 * `cargo test --all-targets` — 182 passed; 0 failed. New test:

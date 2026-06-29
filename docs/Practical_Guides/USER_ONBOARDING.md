@@ -30,6 +30,19 @@ maestro tui --config ~/.config/maestro/config.yml
 5. Onboarding state is saved locally for future sessions.
 6. After project onboarding is completed, Maestro returns automatically to standard TUI mode.
 
+## Onboarding Engines (Model-Availability SENSE)
+Before the interview starts, Maestro probes the configured default provider to sense
+whether a model is actually available, then selects an engine automatically:
+- **LLM-driven interview (model online):** Maestro conducts the onboarding as a single
+  cognitive voice and can author your configuration files directly.
+- **Guided setup (model offline):** when no model is reachable, Maestro switches to a
+  scripted guided setup that lists the steps to get a provider running, then
+  auto-promotes to the LLM-driven interview the next time onboarding starts once a model
+  becomes available.
+
+The Maestro panel status line shows the active engine and whether the model is online or
+offline so you always know which mode you are in.
+
 ## Useful TUI Commands
 - `/help`
 - `/onboarding status`
