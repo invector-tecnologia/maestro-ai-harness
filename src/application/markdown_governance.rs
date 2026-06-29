@@ -11,6 +11,39 @@ pub const SKILLS_DIR: &str = "skills";
 pub const ARCHIVE_DIR: &str = "archive";
 pub const MAESTRO_PERSONA_FILE: &str = "maestro.md";
 
+/// Accepted heading aliases for each required scope field (multilingual).
+const SCOPE_FIELD_ALIASES: &[&[&str]] = &[
+    &["objective", "purpose", "objetivo"],
+    &[
+        "business scope",
+        "scope",
+        "escopo de negocio",
+        "escopo de negócio",
+    ],
+    &["deliverables", "outputs", "entregaveis", "entregáveis"],
+    &[
+        "acceptance criteria",
+        "criteria",
+        "criterios de aceite",
+        "critérios de aceite",
+    ],
+    &[
+        "dependencies",
+        "dependency map",
+        "dependencias",
+        "dependências",
+    ],
+];
+
+/// Canonical scope field names, index-aligned with [`SCOPE_FIELD_ALIASES`].
+const SCOPE_REQUIRED_FIELDS: &[&str] = &[
+    "objective",
+    "business scope",
+    "deliverables",
+    "acceptance criteria",
+    "dependencies",
+];
+
 #[derive(Debug, Error)]
 pub enum MarkdownGovernanceError {
     #[error("Invalid scope file name: {0}. Use pattern 001-delivery-name.md")]
@@ -106,39 +139,24 @@ impl MarkdownGovernance {
     ) -> Result<PathBuf, MarkdownGovernanceError> {
         validate_scope_file_name(file_name)?;
         self.validate_scope_sequence(file_name)?;
-        validate_required_fields(
-            "scope",
-            content,
-            &[
-                &["objective", "purpose", "objetivo"],
-                &[
-                    "business scope",
-                    "scope",
-                    "escopo de negocio",
-                    "escopo de negócio",
-                ],
-                &["deliverables", "outputs", "entregaveis", "entregáveis"],
-                &[
-                    "acceptance criteria",
-                    "criteria",
-                    "criterios de aceite",
-                    "critérios de aceite",
-                ],
-                &[
-                    "dependencies",
-                    "dependency map",
-                    "dependencias",
-                    "dependências",
-                ],
-            ],
-            &[
-                "objective",
-                "business scope",
-                "deliverables",
-                "acceptance criteria",
-                "dependencies",
-            ],
-        )?;
+        validate_required_fields("scope", content, SCOPE_FIELD_ALIASES, SCOPE_REQUIRED_FIELDS)?;
+
+        Ok(self.scopes_dir().join(file_name))
+    }
+
+    /// Validate a scope document for an in-place edit/update overwrite.
+    ///
+    /// Unlike [`validate_scope_document`], this skips the next-in-sequence rule
+    /// (which only governs newly created scopes) so an existing scope can be
+    /// re-authored under its current number, while still enforcing the required
+    /// fields and a valid file name.
+    pub fn validate_scope_overwrite(
+        &self,
+        file_name: &str,
+        content: &str,
+    ) -> Result<PathBuf, MarkdownGovernanceError> {
+        validate_scope_file_name(file_name)?;
+        validate_required_fields("scope", content, SCOPE_FIELD_ALIASES, SCOPE_REQUIRED_FIELDS)?;
 
         Ok(self.scopes_dir().join(file_name))
     }

@@ -129,6 +129,26 @@ _To be filled at completion of each increment with executed commands and outcome
   `maestro_interview_role_is_single_capability_aware_voice`.
 * `scripts/check-doc-links.sh` — link integrity passed.
 
+### PR3 — CRUD-through-governance apply path + Option A guided setup (AC4, AC6)
+* Added `SCOPE_FIELD_ALIASES` / `SCOPE_REQUIRED_FIELDS` consts and
+  `validate_scope_overwrite` (validates fields without enforcing scope sequence, so
+  existing scopes can be edited/updated) in `src/application/markdown_governance.rs`.
+* Added `AppliedChange { Written, Read, Archived }` and
+  `apply_directive_change(&MarkdownGovernance, &DirectiveFileChange)` implementing the
+  full CRUD surface through governance: Create/Edit/Update validate then write, Read
+  returns content, Delete archives (recoverable, never a hard delete). Maestro persona
+  and skill remain immutable. Added `guided_setup_actions(ProviderStatus)` (Option A
+  steps, empty when a model is available) and `reassess_engine(ProviderStatus)` for
+  auto-promotion A→B once a model responds, in `src/application/interview_bot.rs`.
+* `cargo fmt --all` — clean.
+* `cargo clippy --all-targets -- -D warnings` — no warnings.
+* `cargo test --all-targets` — 177 passed; 0 failed. New tests:
+  `apply_directive_change_creates_reads_and_archives_persona`,
+  `apply_directive_change_rejects_immutable_maestro_persona`,
+  `guided_setup_actions_present_only_when_model_unavailable`,
+  `reassess_engine_auto_promotes_when_model_becomes_available`.
+* `scripts/check-doc-links.sh` — link integrity passed.
+
 ## 6. RESIDUAL RISKS
 * Gemini model enumeration is awkward against a `generateContent` endpoint; PR1 verifies
   access-token acquisition (auth) rather than a full catalog listing and documents the

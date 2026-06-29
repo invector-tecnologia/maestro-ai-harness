@@ -5,6 +5,7 @@ use std::time::SystemTime;
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::application::markdown_governance::{MarkdownGovernance, MarkdownGovernanceError};
 use crate::application::persona_operations::PersonaRuntimeRole;
 use crate::application::project_deps::ProjectDepsConfig;
 use crate::domain::ports::llm_provider::ProviderStatus;
@@ -283,6 +284,127 @@ Conduct one focused onboarding question at a time. When you are ready to propose
 changes, emit a fenced ```json block containing a \"changes\" array of objects with \
 fields {op, kind, persona?, name, file?, content?}; the harness applies them through \
 governance only after the user approves. Never claim you cannot read or modify files."
+}
+
+/// Result of applying a [`DirectiveFileChange`] through governance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppliedChange {
+    /// A file was created or overwritten at the given path.
+    Written(std::path::PathBuf),
+    /// A file was read; carries its path and content.
+    Read {
+        path: std::path::PathBuf,
+        content: String,
+    },
+    /// A file was deleted by archiving it to `maestro/archive/`.
+    Archived(std::path::PathBuf),
+}
+
+/// Resolve the on-disk path a directive change targets, without touching it.
+fn directive_target_path(
+    governance: &MarkdownGovernance,
+    target: &DirectiveTarget,
+    file_name: &str,
+) -> std::path::PathBuf {
+    match target {
+        DirectiveTarget::Persona { .. } => governance.personas_dir().join(file_name),
+        DirectiveTarget::Skill { persona, .. } => {
+            governance.skills_dir().join(persona).join(file_name)
+        }
+        DirectiveTarget::Scope { .. } => governance.scopes_dir().join(file_name),
+    }
+}
+
+/// Apply a single proposed change through markdown governance, implementing the
+/// full CRUD surface the onboarding engines require.
+///
+/// - Create/Edit/Update validate the document (required fields, Maestro
+///   immutability, scope sequencing for new scopes) and write it.
+/// - Read returns the current document content.
+/// - Delete is implemented as a recoverable archive, never a hard filesystem
+///   delete.
+pub fn apply_directive_change(
+    governance: &MarkdownGovernance,
+    change: &DirectiveFileChange,
+) -> Result<AppliedChange, MarkdownGovernanceError> {
+    governance.ensure_directories()?;
+
+    match change.op {
+        FileOp::Read => {
+            let path = directive_target_path(governance, &change.target, &change.file_name);
+            let content = governance.read_document(&path)?;
+            Ok(AppliedChange::Read { path, content })
+        }
+        FileOp::Delete => {
+            let path = directive_target_path(governance, &change.target, &change.file_name);
+            let archived = governance.archive_document(&path)?;
+            Ok(AppliedChange::Archived(archived))
+        }
+        FileOp::Create | FileOp::Edit | FileOp::Update => {
+            let content = change.content.as_deref().unwrap_or_default();
+            let path = match &change.target {
+                DirectiveTarget::Persona { .. } => {
+                    governance.validate_persona_document(&change.file_name, content)?
+                }
+                DirectiveTarget::Skill { persona, .. } => {
+                    governance.validate_skill_document(persona, &change.file_name, content)?
+                }
+                DirectiveTarget::Scope { .. } => {
+                    if change.op == FileOp::Create {
+                        governance.validate_scope_document(&change.file_name, content)?
+                    } else {
+                        governance.validate_scope_overwrite(&change.file_name, content)?
+                    }
+                }
+            };
+
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, content)?;
+            Ok(AppliedChange::Written(path))
+        }
+    }
+}
+
+/// Deterministic Option A guidance: actionable steps to make a model available so
+/// the interview can auto-promote to the LLM-driven engine.
+///
+/// Returns an empty list when a model is already available (nothing to guide).
+pub fn guided_setup_actions(status: ProviderStatus) -> Vec<String> {
+    match status {
+        ProviderStatus::Available => Vec::new(),
+        ProviderStatus::Unreachable => vec![
+            "Start a local model server (for example: `ollama serve`) or set the provider \
+endpoint in maestro/config.yml."
+                .to_string(),
+            "Confirm `system.default_provider` and `system.default_model` point at a running \
+provider."
+                .to_string(),
+            "Re-run readiness; onboarding promotes to the LLM-driven interview once the model \
+responds."
+                .to_string(),
+        ],
+        ProviderStatus::Unauthorized => vec![
+            "Set the provider credential (auth_env_var) for the default provider in your \
+environment."
+                .to_string(),
+            "Verify the API key/token is valid and not expired.".to_string(),
+            "Re-run readiness to retry the model probe.".to_string(),
+        ],
+        ProviderStatus::ModelMissing => vec![
+            "Pull or select a served model (for example: `ollama pull llama3`).".to_string(),
+            "Ensure `system.default_model` matches a model the provider lists.".to_string(),
+            "Re-run readiness; the interview auto-promotes once the model is present.".to_string(),
+        ],
+    }
+}
+
+/// Re-sense outcome for Option A: given a fresh probe result, return the engine
+/// the interview should now run. When the probe reports `Available`, the
+/// interview auto-promotes from guided setup to the LLM-driven engine.
+pub fn reassess_engine(status: ProviderStatus) -> InterviewEngine {
+    InterviewEngine::from_provider_status(status)
 }
 
 /// Represents a single Q&A exchange in the interview
@@ -1229,6 +1351,109 @@ mod tests {
         let preamble = maestro_capability_preamble();
         assert!(preamble.contains("Create, Read, Update, Edit, and Delete"));
         assert!(preamble.to_lowercase().contains("not a generic"));
+    }
+
+    fn temp_governance_root() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("maestro-apply-{}", Uuid::new_v4()))
+    }
+
+    fn sample_persona_markdown(name: &str) -> String {
+        format!(
+            "# {name}\n## Purpose\np\n## Responsibilities\nr\n## Deliverables\nd\n## Operational Instructions\no\n## Interaction Matrix\nm\n## Quality Criteria\nq\n"
+        )
+    }
+
+    #[test]
+    fn apply_directive_change_creates_reads_and_archives_persona() {
+        let root = temp_governance_root();
+        let governance = MarkdownGovernance::new(&root);
+
+        let create = DirectiveFileChange {
+            op: FileOp::Create,
+            target: DirectiveTarget::Persona {
+                name: "Data Scientist".to_string(),
+            },
+            file_name: "data-scientist.md".to_string(),
+            content: Some(sample_persona_markdown("Data Scientist")),
+        };
+        let written = apply_directive_change(&governance, &create).expect("create succeeds");
+        let written_path = match written {
+            AppliedChange::Written(path) => path,
+            other => panic!("expected Written, got {:?}", other),
+        };
+        assert!(written_path.exists());
+
+        let read = DirectiveFileChange {
+            op: FileOp::Read,
+            content: None,
+            ..create.clone()
+        };
+        let read_result = apply_directive_change(&governance, &read).expect("read succeeds");
+        match read_result {
+            AppliedChange::Read { content, .. } => assert!(content.contains("# Data Scientist")),
+            other => panic!("expected Read, got {:?}", other),
+        }
+
+        let delete = DirectiveFileChange {
+            op: FileOp::Delete,
+            content: None,
+            ..create.clone()
+        };
+        let archived = apply_directive_change(&governance, &delete).expect("delete archives");
+        match archived {
+            AppliedChange::Archived(path) => assert!(path.exists()),
+            other => panic!("expected Archived, got {:?}", other),
+        }
+        assert!(!written_path.exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_directive_change_rejects_immutable_maestro_persona() {
+        let root = temp_governance_root();
+        let governance = MarkdownGovernance::new(&root);
+
+        let change = DirectiveFileChange {
+            op: FileOp::Create,
+            target: DirectiveTarget::Persona {
+                name: "Maestro".to_string(),
+            },
+            file_name: "maestro.md".to_string(),
+            content: Some(sample_persona_markdown("Maestro")),
+        };
+
+        let error = apply_directive_change(&governance, &change).expect_err("must reject maestro");
+        assert!(matches!(
+            error,
+            MarkdownGovernanceError::ImmutablePersona(_)
+        ));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn guided_setup_actions_present_only_when_model_unavailable() {
+        assert!(guided_setup_actions(ProviderStatus::Available).is_empty());
+        for status in [
+            ProviderStatus::Unreachable,
+            ProviderStatus::Unauthorized,
+            ProviderStatus::ModelMissing,
+        ] {
+            assert!(!guided_setup_actions(status).is_empty());
+        }
+    }
+
+    #[test]
+    fn reassess_engine_auto_promotes_when_model_becomes_available() {
+        assert_eq!(
+            reassess_engine(ProviderStatus::Unreachable),
+            InterviewEngine::GuidedSetup
+        );
+        assert_eq!(
+            reassess_engine(ProviderStatus::Available),
+            InterviewEngine::LlmDriven
+        );
     }
 
     #[test]
