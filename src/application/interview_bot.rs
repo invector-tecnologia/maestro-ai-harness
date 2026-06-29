@@ -7,6 +7,283 @@ use uuid::Uuid;
 
 use crate::application::persona_operations::PersonaRuntimeRole;
 use crate::application::project_deps::ProjectDepsConfig;
+use crate::domain::ports::llm_provider::ProviderStatus;
+
+/// Which onboarding interview engine drives the conversation.
+///
+/// Selected by the SENSE stage: when a model is actually serving requests the
+/// single-voice LLM interview (Option B) runs; otherwise deterministic guided
+/// setup (Option A) runs until a model becomes available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterviewEngine {
+    /// Option B: single-voice, LLM-driven cognitive interview.
+    LlmDriven,
+    /// Option A: deterministic guided setup that helps configure a model.
+    GuidedSetup,
+}
+
+impl InterviewEngine {
+    /// Choose the engine from a SENSE-stage provider probe result.
+    pub fn from_provider_status(status: ProviderStatus) -> Self {
+        match status {
+            ProviderStatus::Available => InterviewEngine::LlmDriven,
+            ProviderStatus::Unreachable
+            | ProviderStatus::Unauthorized
+            | ProviderStatus::ModelMissing => InterviewEngine::GuidedSetup,
+        }
+    }
+
+    /// Choose the engine from the readiness `model_loaded` signal.
+    pub fn from_model_loaded(model_loaded: bool) -> Self {
+        if model_loaded {
+            InterviewEngine::LlmDriven
+        } else {
+            InterviewEngine::GuidedSetup
+        }
+    }
+
+    /// Whether this engine drives the interview with a live model.
+    pub fn is_llm_driven(&self) -> bool {
+        matches!(self, InterviewEngine::LlmDriven)
+    }
+
+    /// Human-readable label used in logs and the TUI status line.
+    pub fn label(&self) -> &'static str {
+        match self {
+            InterviewEngine::LlmDriven => "llm-driven interview",
+            InterviewEngine::GuidedSetup => "guided setup",
+        }
+    }
+}
+
+/// Full CRUD vocabulary for governed file operations the interview can request.
+///
+/// Extends [`DirectiveOperation`] with `Read`, so every onboarding engine can
+/// Create, Read, Update, Edit, and Delete files inside `maestro/` through
+/// governance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileOp {
+    Create,
+    Read,
+    Update,
+    Edit,
+    Delete,
+}
+
+impl FileOp {
+    /// Human-readable label used in prompts, logs, and proposals.
+    pub fn label(&self) -> &'static str {
+        match self {
+            FileOp::Create => "create",
+            FileOp::Read => "read",
+            FileOp::Update => "update",
+            FileOp::Edit => "edit",
+            FileOp::Delete => "delete",
+        }
+    }
+
+    /// Parse a case-insensitive operation keyword from an LLM proposal.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "create" => Some(FileOp::Create),
+            "read" => Some(FileOp::Read),
+            "update" => Some(FileOp::Update),
+            "edit" => Some(FileOp::Edit),
+            "delete" | "archive" => Some(FileOp::Delete),
+            _ => None,
+        }
+    }
+
+    /// Whether this operation produces or replaces file content.
+    pub fn writes_content(&self) -> bool {
+        matches!(self, FileOp::Create | FileOp::Update | FileOp::Edit)
+    }
+}
+
+/// A single proposed change to a governed file inside `maestro/`.
+///
+/// This is the normalized unit the apply path (governance) consumes after human
+/// approval. `content` is required for write operations and absent for
+/// `Read`/`Delete`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectiveFileChange {
+    pub op: FileOp,
+    pub target: DirectiveTarget,
+    pub file_name: String,
+    pub content: Option<String>,
+}
+
+/// Errors raised when parsing LLM-proposed directive changes.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ProposalParseError {
+    #[error("no JSON proposal block found in the model response")]
+    NoJsonBlock,
+    #[error("malformed JSON proposal: {0}")]
+    MalformedJson(String),
+    #[error("unknown file operation: {0}")]
+    UnknownOperation(String),
+    #[error("unknown directive kind: {0}")]
+    UnknownKind(String),
+    #[error("skill change is missing its owning persona")]
+    SkillMissingPersona,
+    #[error("{operation} change for '{name}' is missing content")]
+    MissingContent { operation: String, name: String },
+}
+
+/// Raw JSON shape the model emits for a single proposed change.
+#[derive(Debug, Deserialize)]
+struct RawProposalChange {
+    op: String,
+    kind: String,
+    #[serde(default)]
+    persona: Option<String>,
+    name: String,
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+}
+
+/// Raw JSON envelope: either a bare array of changes or `{ "changes": [...] }`.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawProposalEnvelope {
+    Array(Vec<RawProposalChange>),
+    Object {
+        #[serde(default)]
+        changes: Vec<RawProposalChange>,
+    },
+}
+
+/// Parse the model's response into a normalized set of governed file changes.
+///
+/// Tolerates surrounding prose by extracting a fenced ```json block or the first
+/// balanced JSON array/object in the text.
+pub fn parse_directive_proposals(
+    raw: &str,
+) -> Result<Vec<DirectiveFileChange>, ProposalParseError> {
+    let json = extract_json_block(raw).ok_or(ProposalParseError::NoJsonBlock)?;
+
+    let envelope: RawProposalEnvelope = serde_json::from_str(&json)
+        .map_err(|error| ProposalParseError::MalformedJson(error.to_string()))?;
+
+    let raw_changes = match envelope {
+        RawProposalEnvelope::Array(changes) => changes,
+        RawProposalEnvelope::Object { changes } => changes,
+    };
+
+    raw_changes
+        .into_iter()
+        .map(normalize_proposal_change)
+        .collect()
+}
+
+fn normalize_proposal_change(
+    raw: RawProposalChange,
+) -> Result<DirectiveFileChange, ProposalParseError> {
+    let RawProposalChange {
+        op,
+        kind,
+        persona,
+        name,
+        file,
+        content,
+    } = raw;
+
+    let op = FileOp::parse(&op).ok_or(ProposalParseError::UnknownOperation(op))?;
+
+    let target = match kind.trim().to_lowercase().as_str() {
+        "persona" => DirectiveTarget::Persona { name },
+        "skill" => DirectiveTarget::Skill {
+            persona: persona
+                .filter(|value| !value.trim().is_empty())
+                .ok_or(ProposalParseError::SkillMissingPersona)?,
+            name,
+        },
+        "scope" => DirectiveTarget::Scope { name },
+        other => return Err(ProposalParseError::UnknownKind(other.to_string())),
+    };
+
+    let file_name = file
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| target.default_file_name());
+
+    let content = content.filter(|value| !value.trim().is_empty());
+
+    if op.writes_content() && content.is_none() {
+        return Err(ProposalParseError::MissingContent {
+            operation: op.label().to_string(),
+            name: target.display_name().to_string(),
+        });
+    }
+
+    Ok(DirectiveFileChange {
+        op,
+        target,
+        file_name,
+        content,
+    })
+}
+
+/// Extract a JSON payload from a model response: prefers a fenced ```json block,
+/// then falls back to the first balanced `[...]` or `{...}` span.
+fn extract_json_block(raw: &str) -> Option<String> {
+    if let Some(start) = raw.find("```json") {
+        let after = &raw[start + "```json".len()..];
+        if let Some(end) = after.find("```") {
+            let candidate = after[..end].trim();
+            if !candidate.is_empty() {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+
+    let array = balanced_span(raw, '[', ']');
+    let object = balanced_span(raw, '{', '}');
+    match (array, object) {
+        (Some(a), Some(o)) => {
+            if a.0 <= o.0 {
+                Some(raw[a.0..=a.1].to_string())
+            } else {
+                Some(raw[o.0..=o.1].to_string())
+            }
+        }
+        (Some(a), None) => Some(raw[a.0..=a.1].to_string()),
+        (None, Some(o)) => Some(raw[o.0..=o.1].to_string()),
+        (None, None) => None,
+    }
+}
+
+/// Find the first balanced `(open, close)` span, returning byte indices.
+fn balanced_span(raw: &str, open: char, close: char) -> Option<(usize, usize)> {
+    let start = raw.find(open)?;
+    let mut depth = 0i32;
+    for (offset, ch) in raw[start..].char_indices() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some((start, start + offset));
+            }
+        }
+    }
+    None
+}
+
+/// Capability-asserting preamble injected into the interview system prompt.
+///
+/// Prevents the "I'm just a text-only AI" hallucination by stating, up front,
+/// that Maestro authors governed files and how it must emit proposals.
+pub fn maestro_capability_preamble() -> &'static str {
+    "You are Maestro, the orchestrator of this AI harness. You are not a generic, \
+text-only assistant: you can Create, Read, Update, Edit, and Delete persona, skill, \
+and scope markdown files inside the maestro/ workspace through governed operations. \
+Conduct one focused onboarding question at a time. When you are ready to propose \
+changes, emit a fenced ```json block containing a \"changes\" array of objects with \
+fields {op, kind, persona?, name, file?, content?}; the harness applies them through \
+governance only after the user approves. Never claim you cannot read or modify files."
+}
 
 /// Represents a single Q&A exchange in the interview
 #[derive(Debug, Clone)]
@@ -857,6 +1134,102 @@ impl Default for InterviewBot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interview_engine_follows_provider_status() {
+        assert_eq!(
+            InterviewEngine::from_provider_status(ProviderStatus::Available),
+            InterviewEngine::LlmDriven
+        );
+        for status in [
+            ProviderStatus::Unreachable,
+            ProviderStatus::Unauthorized,
+            ProviderStatus::ModelMissing,
+        ] {
+            assert_eq!(
+                InterviewEngine::from_provider_status(status),
+                InterviewEngine::GuidedSetup
+            );
+        }
+        assert!(InterviewEngine::from_model_loaded(true).is_llm_driven());
+        assert!(!InterviewEngine::from_model_loaded(false).is_llm_driven());
+    }
+
+    #[test]
+    fn file_op_parses_full_crud_vocabulary() {
+        assert_eq!(FileOp::parse("Create"), Some(FileOp::Create));
+        assert_eq!(FileOp::parse("read"), Some(FileOp::Read));
+        assert_eq!(FileOp::parse("UPDATE"), Some(FileOp::Update));
+        assert_eq!(FileOp::parse("edit"), Some(FileOp::Edit));
+        assert_eq!(FileOp::parse("delete"), Some(FileOp::Delete));
+        assert_eq!(FileOp::parse("archive"), Some(FileOp::Delete));
+        assert_eq!(FileOp::parse("frobnicate"), None);
+        assert!(FileOp::Create.writes_content());
+        assert!(!FileOp::Read.writes_content());
+        assert!(!FileOp::Delete.writes_content());
+    }
+
+    #[test]
+    fn parses_fenced_json_proposal_with_surrounding_prose() {
+        let raw = "Here is my plan:\n```json\n{\"changes\":[\
+            {\"op\":\"create\",\"kind\":\"persona\",\"name\":\"Data Scientist\",\
+             \"file\":\"data-scientist.md\",\"content\":\"# Data Scientist\"},\
+            {\"op\":\"create\",\"kind\":\"skill\",\"persona\":\"Software Engineer\",\
+             \"name\":\"API Design\",\"content\":\"# API Design\"}\
+            ]}\n```\nApprove?";
+
+        let changes = parse_directive_proposals(raw).expect("parse should succeed");
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].op, FileOp::Create);
+        assert_eq!(changes[0].file_name, "data-scientist.md");
+        assert!(matches!(
+            changes[0].target,
+            DirectiveTarget::Persona { ref name } if name == "Data Scientist"
+        ));
+        // Missing `file` falls back to the slugified default name.
+        assert_eq!(changes[1].file_name, "api-design.md");
+        assert!(matches!(
+            changes[1].target,
+            DirectiveTarget::Skill { ref persona, .. } if persona == "Software Engineer"
+        ));
+    }
+
+    #[test]
+    fn parses_bare_json_array_proposal() {
+        let raw =
+            "[{\"op\":\"delete\",\"kind\":\"scope\",\"name\":\"legacy\",\"file\":\"legacy.md\"}]";
+        let changes = parse_directive_proposals(raw).expect("parse should succeed");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].op, FileOp::Delete);
+        assert!(changes[0].content.is_none());
+    }
+
+    #[test]
+    fn proposal_parser_rejects_write_without_content() {
+        let raw = "[{\"op\":\"create\",\"kind\":\"persona\",\"name\":\"Empty\"}]";
+        let error = parse_directive_proposals(raw).expect_err("missing content must fail");
+        assert!(matches!(error, ProposalParseError::MissingContent { .. }));
+    }
+
+    #[test]
+    fn proposal_parser_rejects_skill_without_persona() {
+        let raw = "[{\"op\":\"create\",\"kind\":\"skill\",\"name\":\"X\",\"content\":\"# X\"}]";
+        let error = parse_directive_proposals(raw).expect_err("missing persona must fail");
+        assert_eq!(error, ProposalParseError::SkillMissingPersona);
+    }
+
+    #[test]
+    fn proposal_parser_reports_missing_json_block() {
+        let error = parse_directive_proposals("no json here").expect_err("must fail");
+        assert_eq!(error, ProposalParseError::NoJsonBlock);
+    }
+
+    #[test]
+    fn capability_preamble_asserts_file_authoring() {
+        let preamble = maestro_capability_preamble();
+        assert!(preamble.contains("Create, Read, Update, Edit, and Delete"));
+        assert!(preamble.to_lowercase().contains("not a generic"));
+    }
 
     #[test]
     fn interview_session_initializes_empty() {

@@ -137,6 +137,146 @@ impl Role for PersonaRuntimeRole {
     }
 }
 
+/// Interview-time state for the single-voice cognitive Maestro interview.
+#[derive(Default)]
+struct InterviewRoleState {
+    should_respond: bool,
+    observed_message: Option<Message>,
+    generated_content: Option<String>,
+}
+
+/// Single-voice cognitive interview role (Option B).
+///
+/// Drives the onboarding interview on the same `observe → think → act` loop as
+/// every other role, but with a capability-asserting prompt so Maestro presents
+/// as a file-authoring orchestrator rather than a text-only assistant. It is the
+/// sole producer of "Maestro" messages during the LLM-driven interview, removing
+/// the historical dual-voice contradiction.
+pub struct MaestroInterviewRole {
+    persona: Persona,
+    llm_provider: Arc<dyn LlmProvider>,
+    state: Arc<Mutex<InterviewRoleState>>,
+}
+
+impl std::fmt::Debug for MaestroInterviewRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MaestroInterviewRole")
+            .field("persona", &self.persona.name)
+            .finish()
+    }
+}
+
+impl MaestroInterviewRole {
+    /// Build the interview role from an explicit Maestro persona and provider.
+    pub fn new(persona: Persona, llm_provider: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            persona,
+            llm_provider,
+            state: Arc::new(Mutex::new(InterviewRoleState::default())),
+        }
+    }
+
+    /// Build the interview role bound to the immutable Maestro persona.
+    pub fn for_maestro(llm_provider: Arc<dyn LlmProvider>) -> Result<Self, PersonaOperationsError> {
+        let catalog = PersonaCatalog::default_personas();
+        catalog.validate()?;
+        let persona = catalog
+            .personas
+            .into_iter()
+            .find(|persona| persona.name == "Maestro")
+            .ok_or_else(|| PersonaOperationsError::PersonaNotFound("Maestro".to_string()))?;
+        Ok(Self::new(persona, llm_provider))
+    }
+
+    /// Capability-aware interview prompt that asserts file-authoring authority.
+    fn build_prompt(&self, message: &Message) -> String {
+        format!(
+            "{}\n\nPersona: {}\nPurpose: {}\nResponsibilities: {}\nUser said: {}",
+            crate::application::interview_bot::maestro_capability_preamble(),
+            self.persona.name,
+            self.persona.purpose,
+            self.persona.responsibilities.join("; "),
+            message.content()
+        )
+    }
+}
+
+#[async_trait]
+impl Role for MaestroInterviewRole {
+    fn name(&self) -> &str {
+        &self.persona.name
+    }
+
+    fn profile(&self) -> &str {
+        &self.persona.purpose
+    }
+
+    async fn observe(&self, messages: &[Message]) -> Result<(), RoleError> {
+        let mut state = self.state.lock().await;
+        let Some(latest) = messages.last() else {
+            return Ok(());
+        };
+
+        if latest.sender() == "user" {
+            state.should_respond = true;
+            state.observed_message = Some(latest.clone());
+        }
+
+        Ok(())
+    }
+
+    async fn think(&self) -> Result<(), RoleError> {
+        let message_to_analyze = {
+            let state = self.state.lock().await;
+            if !state.should_respond {
+                return Ok(());
+            }
+            state.observed_message.clone()
+        };
+
+        let Some(message) = message_to_analyze else {
+            return Ok(());
+        };
+
+        let prompt = self.build_prompt(&message);
+        let generated = self.llm_provider.text_only(&prompt).await?;
+
+        let mut state = self.state.lock().await;
+        if state.should_respond {
+            state.generated_content = Some(generated);
+        }
+
+        Ok(())
+    }
+
+    async fn act(&self) -> Result<Option<Message>, RoleError> {
+        let mut state = self.state.lock().await;
+        if !state.should_respond {
+            return Ok(None);
+        }
+
+        let Some(observed) = state.observed_message.clone() else {
+            state.should_respond = false;
+            return Ok(None);
+        };
+
+        let generated = state
+            .generated_content
+            .clone()
+            .unwrap_or_else(|| "No analysis available".to_string());
+
+        state.should_respond = false;
+        state.observed_message = None;
+        state.generated_content = None;
+
+        Ok(Some(Message::new(
+            self.persona.name.clone(),
+            generated,
+            Some(observed.id()),
+        )))
+    }
+}
+
 pub fn registrations_from_default_personas(
     router: &ModelRouter,
 ) -> Result<Vec<AgentRegistration>, PersonaOperationsError> {
@@ -377,5 +517,68 @@ mod tests {
         let registrations = registrations.unwrap_or_default();
         assert_eq!(registrations.len(), 1);
         assert_eq!(registrations[0].name, "Maestro");
+    }
+
+    struct CapturingProvider {
+        last_prompt: Arc<Mutex<Option<String>>>,
+        reply: String,
+    }
+
+    #[async_trait]
+    impl LlmProvider for CapturingProvider {
+        async fn chat(
+            &self,
+            request: crate::domain::ports::llm_provider::LlmRequest,
+        ) -> Result<crate::domain::ports::llm_provider::LlmResponse, RoleError> {
+            let prompt = request
+                .messages
+                .first()
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            *self.last_prompt.lock().await = Some(prompt);
+            Ok(crate::domain::ports::llm_provider::LlmResponse {
+                text: Some(self.reply.clone()),
+                tool_calls: vec![],
+                finish_reason: "stop".to_string(),
+                usage: None,
+            })
+        }
+
+        fn capabilities(&self) -> crate::domain::ports::llm_provider::ProviderCapabilities {
+            crate::domain::ports::llm_provider::ProviderCapabilities::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn maestro_interview_role_is_single_capability_aware_voice() {
+        let last_prompt = Arc::new(Mutex::new(None));
+        let provider: Arc<dyn LlmProvider> = Arc::new(CapturingProvider {
+            last_prompt: Arc::clone(&last_prompt),
+            reply: "What is your project's primary goal?".to_string(),
+        });
+
+        let role = MaestroInterviewRole::for_maestro(provider).expect("maestro persona exists");
+        assert_eq!(role.name(), "Maestro");
+
+        let user_message = Message::new("user".to_string(), "I want to start".to_string(), None);
+
+        role.observe(std::slice::from_ref(&user_message))
+            .await
+            .expect("observe");
+        role.think().await.expect("think");
+        let produced = role.act().await.expect("act");
+
+        // Exactly one Maestro-authored message is produced (single voice).
+        let message = produced.expect("interview role must respond to the user");
+        assert_eq!(message.sender(), "Maestro");
+        assert_eq!(message.content(), "What is your project's primary goal?");
+
+        // The prompt asserted file-authoring capability (no text-only disclaimer).
+        let captured = last_prompt.lock().await.clone().expect("prompt captured");
+        assert!(captured.contains("Create, Read, Update, Edit, and Delete"));
+
+        // A second act with no new user input stays silent (no double-posting).
+        let silent = role.act().await.expect("act idempotent");
+        assert!(silent.is_none());
     }
 }

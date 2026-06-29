@@ -110,6 +110,25 @@ _To be filled at completion of each increment with executed commands and outcome
   matches_model_in_catalog_with_tag_tolerance}`.
 * `scripts/check-doc-links.sh` — link integrity passed.
 
+### PR2 — Cognitive interview core (AC5)
+* Added `InterviewEngine { LlmDriven, GuidedSetup }` with `from_provider_status` /
+  `from_model_loaded` selectors, `FileOp { Create, Read, Update, Edit, Delete }`,
+  `DirectiveFileChange`, the `parse_directive_proposals` JSON parser
+  (`ProposalParseError`), and `maestro_capability_preamble()` in
+  `src/application/interview_bot.rs`.
+* Added single-voice `MaestroInterviewRole` (capability-aware prompt) on the existing
+  `observe → think → act` loop in `src/application/persona_operations.rs`.
+* `cargo fmt --all` — clean.
+* `cargo clippy --all-targets -- -D warnings` — no warnings.
+* `cargo test --all-targets` — 173 passed; 0 failed. New tests:
+  `interview_engine_follows_provider_status`, `file_op_parses_full_crud_vocabulary`,
+  `parses_fenced_json_proposal_with_surrounding_prose`, `parses_bare_json_array_proposal`,
+  `proposal_parser_rejects_write_without_content`,
+  `proposal_parser_rejects_skill_without_persona`,
+  `proposal_parser_reports_missing_json_block`, `capability_preamble_asserts_file_authoring`,
+  `maestro_interview_role_is_single_capability_aware_voice`.
+* `scripts/check-doc-links.sh` — link integrity passed.
+
 ## 6. RESIDUAL RISKS
 * Gemini model enumeration is awkward against a `generateContent` endpoint; PR1 verifies
   access-token acquisition (auth) rather than a full catalog listing and documents the
