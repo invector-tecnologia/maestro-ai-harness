@@ -325,6 +325,21 @@ impl TuiApp {
         }
 
         self.agents = new_agents;
+
+        // Track the live Maestro agent's thinking window so the interview panel
+        // can render a moving elapsed indicator. Set the start instant when
+        // Maestro enters `think`; clear it as soon as it leaves that state.
+        let maestro_thinking = self
+            .agents
+            .iter()
+            .any(|agent| agent.name == "Maestro" && agent.status == "think");
+        if maestro_thinking {
+            if self.thinking_since.is_none() {
+                self.thinking_since = Some(std::time::Instant::now());
+            }
+        } else {
+            self.thinking_since = None;
+        }
     }
 
     pub fn update_logs_from_history(&mut self, history: &[Message]) {

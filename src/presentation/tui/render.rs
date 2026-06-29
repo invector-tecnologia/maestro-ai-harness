@@ -502,6 +502,42 @@ fn render_input_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &
     }
 }
 
+/// Number of seconds Maestro can spend in `think` before the interview panel
+/// adds a hint that the model may be slow or unreachable.
+const SLOW_THINK_HINT_SECS: u64 = 20;
+
+/// Build the Maestro interview status line(s) from the live agent state.
+///
+/// Driven by the real `Maestro` agent health (not a static label) so the panel
+/// reflects whether Maestro is genuinely thinking, idle/listening, or errored,
+/// and surfaces a slow-model hint when a single `think` runs unusually long.
+fn maestro_status_lines(
+    approval_pending: bool,
+    maestro_status: Option<&str>,
+    maestro_online: bool,
+    thinking_secs: Option<u64>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if approval_pending {
+        lines.push("  🔔 Awaiting your decision...".to_string());
+    } else if maestro_status == Some("error") {
+        lines.push("  ❌ Maestro hit an error — see the Orchestration log.".to_string());
+    } else if maestro_status == Some("think") {
+        let secs = thinking_secs.unwrap_or(0);
+        lines.push(format!("  🧠 Thinking with Maestro… ({}s)", secs));
+        if secs >= SLOW_THINK_HINT_SECS {
+            lines.push(
+                "  ⏳ The model is slow — check provider/model and timeout_ms in maestro/config.yml."
+                    .to_string(),
+            );
+        }
+    } else {
+        let _ = maestro_online;
+        lines.push("  🎧 Listening…".to_string());
+    }
+    lines
+}
+
 fn render_maestro_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
     let mut lines = vec![];
 
@@ -526,13 +562,18 @@ fn render_maestro_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app:
             }
         ));
         lines.push(format!("  Turn: {}/10", turn));
-        if app.approval_modal_visible {
-            lines.push("  🔔 Awaiting your decision...".to_string());
-        } else if maestro_online {
-            lines.push("  🧠 Thinking with Maestro...".to_string());
-        } else {
-            lines.push("  🎧 Listening...".to_string());
-        }
+        let maestro_status = app
+            .agents
+            .iter()
+            .find(|agent| agent.name == "Maestro")
+            .map(|agent| agent.status.clone());
+        let thinking_secs = app.thinking_since.map(|since| since.elapsed().as_secs());
+        lines.extend(maestro_status_lines(
+            app.approval_modal_visible,
+            maestro_status.as_deref(),
+            maestro_online,
+            thinking_secs,
+        ));
     } else {
         lines.push("🤖 Maestro: Ready to help with setup".to_string());
     }
@@ -593,4 +634,64 @@ fn render_approval_modal(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app
         .alignment(Alignment::Left);
 
     frame.render_widget(modal, modal_area);
+}
+
+#[cfg(test)]
+mod maestro_status_tests {
+    use super::{maestro_status_lines, SLOW_THINK_HINT_SECS};
+
+    #[test]
+    fn shows_live_elapsed_while_thinking() {
+        let lines = maestro_status_lines(false, Some("think"), true, Some(3));
+        assert_eq!(lines.len(), 1, "fast think shows only the thinking line");
+        assert!(
+            lines[0].contains("Thinking with Maestro") && lines[0].contains("(3s)"),
+            "expected live elapsed thinking line, got {:?}",
+            lines
+        );
+    }
+
+    #[test]
+    fn appends_slow_hint_past_threshold() {
+        let lines = maestro_status_lines(false, Some("think"), true, Some(SLOW_THINK_HINT_SECS));
+        assert_eq!(lines.len(), 2, "slow think adds a hint line");
+        assert!(
+            lines[1].contains("model is slow") && lines[1].contains("timeout_ms"),
+            "expected slow-model hint, got {:?}",
+            lines
+        );
+    }
+
+    #[test]
+    fn listens_when_idle() {
+        let lines = maestro_status_lines(false, Some("idle"), true, None);
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("Listening"),
+            "idle Maestro listens, got {:?}",
+            lines
+        );
+    }
+
+    #[test]
+    fn surfaces_error_state() {
+        let lines = maestro_status_lines(false, Some("error"), true, None);
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("error"),
+            "error state is surfaced, got {:?}",
+            lines
+        );
+    }
+
+    #[test]
+    fn approval_takes_precedence_over_thinking() {
+        let lines = maestro_status_lines(true, Some("think"), true, Some(99));
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("Awaiting your decision"),
+            "approval prompt wins, got {:?}",
+            lines
+        );
+    }
 }

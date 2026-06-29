@@ -71,6 +71,7 @@ fn renders_agents_monitor_and_input_panels() {
         maestro_message_id: None,
         approval_modal_visible: false,
         last_runtime_event_count: 0,
+        thinking_since: None,
         architect_picker: None,
     };
 
@@ -1060,4 +1061,38 @@ fn maestro_panel_shows_guided_setup_engine_when_model_offline() {
     let rendered = buffer_to_string(&terminal);
     assert!(rendered.contains("guided setup"));
     assert!(rendered.contains("model offline"));
+}
+
+#[test]
+fn thinking_since_tracks_maestro_think_state() {
+    use crate::application::agent_runtime::AgentHealth;
+
+    let mut app = TuiApp::default();
+    assert!(app.thinking_since.is_none());
+
+    // Maestro enters `think` → start instant is set.
+    let mut thinking = HashMap::new();
+    thinking.insert("Maestro".to_string(), AgentHealth::Thinking);
+    app.update_agents_from_health(&thinking);
+    assert!(
+        app.thinking_since.is_some(),
+        "thinking_since starts when Maestro begins thinking"
+    );
+
+    // Staying in `think` keeps the original start instant (no reset).
+    let started = app.thinking_since;
+    app.update_agents_from_health(&thinking);
+    assert_eq!(
+        app.thinking_since, started,
+        "thinking_since is not reset while Maestro keeps thinking"
+    );
+
+    // Maestro leaves `think` → start instant is cleared.
+    let mut idle = HashMap::new();
+    idle.insert("Maestro".to_string(), AgentHealth::Idle);
+    app.update_agents_from_health(&idle);
+    assert!(
+        app.thinking_since.is_none(),
+        "thinking_since clears once Maestro stops thinking"
+    );
 }

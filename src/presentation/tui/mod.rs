@@ -150,6 +150,10 @@ pub struct TuiApp {
     maestro_message_id: Option<Uuid>,
     approval_modal_visible: bool,
     last_runtime_event_count: usize,
+    // Tracks when the live Maestro agent entered the `think` state so the
+    // interview panel can show a live elapsed indicator instead of a static
+    // "thinking" label while the model call is in flight.
+    thinking_since: Option<std::time::Instant>,
     // Architect Mode directives picker
     architect_picker: Option<ArchitectPicker>,
 }
