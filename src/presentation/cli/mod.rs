@@ -61,6 +61,10 @@ pub enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    Directives {
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     ValidateConfig {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -132,6 +136,7 @@ pub enum CliOutcome {
     TuiCompleted,
     OnboardingCompleted,
     InterviewCompleted,
+    DirectivesLaunched,
     ConfigValid,
     AgentsListed(Vec<String>),
     DoctorOk,
@@ -205,6 +210,11 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             run_tui_with_runtime(config, OnboardingBootstrap::InitInterview).await?;
 
             Ok(CliOutcome::InterviewCompleted)
+        }
+        Commands::Directives { config } => {
+            run_tui_with_runtime(config, OnboardingBootstrap::DirectiveGovernance).await?;
+
+            Ok(CliOutcome::DirectivesLaunched)
         }
         Commands::ValidateConfig { config } => {
             let _ = ConfigLoader::load(config)?;
@@ -816,6 +826,15 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Interview { config: None })
+        ));
+    }
+
+    #[test]
+    fn parses_directives_command() {
+        let cli = Cli::parse_from(["maestro", "directives"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Directives { config: None })
         ));
     }
 

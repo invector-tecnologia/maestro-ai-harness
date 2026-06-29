@@ -268,6 +268,7 @@ pub enum OnboardingBootstrap {
     Fast,
     Detailed,
     InitInterview,
+    DirectiveGovernance,
 }
 
 fn should_enter_interview(bootstrap: OnboardingBootstrap, readiness_ready: bool) -> bool {
@@ -275,6 +276,7 @@ fn should_enter_interview(bootstrap: OnboardingBootstrap, readiness_ready: bool)
         OnboardingBootstrap::InitInterview => true,
         OnboardingBootstrap::Detailed => !readiness_ready,
         OnboardingBootstrap::Fast => false,
+        OnboardingBootstrap::DirectiveGovernance => false,
     }
 }
 
@@ -1151,6 +1153,12 @@ pub async fn run_tui(
             "🚀 Fast onboarding is using safe defaults. Run 'maestro onboarding --mode detailed' for guided setup."
                 .to_string(),
         );
+    } else if matches!(_bootstrap, OnboardingBootstrap::DirectiveGovernance) {
+        app.logs.push(
+            "📋 Interview Mode — directive governance. Pick a directive to author (Esc to monitor)."
+                .to_string(),
+        );
+        app.enter_directive_select(&governance);
     }
 
     let mut events = EventStream::new();
@@ -3357,6 +3365,18 @@ mod tests {
         ));
         assert!(!should_enter_interview(OnboardingBootstrap::Detailed, true));
         assert!(should_enter_interview(OnboardingBootstrap::Detailed, false));
+    }
+
+    #[test]
+    fn directive_governance_bootstrap_does_not_enter_onboarding_interview() {
+        assert!(!should_enter_interview(
+            OnboardingBootstrap::DirectiveGovernance,
+            true
+        ));
+        assert!(!should_enter_interview(
+            OnboardingBootstrap::DirectiveGovernance,
+            false
+        ));
     }
 
     #[tokio::test]
