@@ -31,7 +31,7 @@ maestro onboarding --mode fast --config ~/.config/maestro/config.yaml
 3. Persona wizard (step 2/3).
 4. Skill wizard (step 3/3).
 5. Completion screen with project ready for use.
-6. Automatic return to normal TUI mode (agent panel).
+6. Automatic return to Workspace Mode (the runtime monitor: ① Input, ② Orchestration, ③ Agent Activity, ④ Readiness).
 
 Fast mode skips the guided interview and uses defaults when the workspace is already close to ready.
 
@@ -50,8 +50,11 @@ After completion, the project has initial artifacts in:
 ```bash
 maestro list-agents
 maestro doctor --config ~/.config/maestro/config.yaml
+maestro directives --config ~/.config/maestro/config.yaml
 maestro run --config ~/.config/maestro/config.yaml --duration-ms 500
 ```
+
+Use `maestro directives` (or `/edit` inside the TUI) to govern personas, persona skills, and scopes; return to the monitor with `/monitor`.
 
 ## Troubleshooting
 - If the flow is in an unexpected stage, use:

@@ -51,7 +51,13 @@
 * INC8: CLI entry launches Interview Mode governance with a dedicated outcome (`src/presentation/cli/mod.rs`). Covers AC8. (done)
 * INC9: Workspace panel roles and focus-flow integration pass (`src/presentation/tui/mod.rs`). Covers AC11. (done)
 * INC10: Sequential Maestro-orchestrated agent workflow with real-time narration and 5-second heartbeat (`src/application/agent_runtime.rs`, `src/application/agent_observability.rs`). Covers AC12. (done)
-* INC11: Quality gate run and evidence capture. Covers AC13.
+* INC11: Quality gate run and evidence capture. Covers AC13. (done)
+
+## 5b. VALIDATION EVIDENCE
+* `cargo fmt --all -- --check`: clean (no diff).
+* `cargo clippy --all-targets -- -D warnings`: clean (no warnings).
+* `cargo test --all-targets`: 133 passed; 0 failed (includes AC1–AC12 coverage: governance/immutability, interview operation model, apply-path, picker select stage, persona catalog, PM-first scope authoring + dependency audit, CLI directive launch, Workspace panel focus flow, and sequential orchestration ordering/failure-isolation/heartbeat/narration tests).
+* `scripts/quality-gate.sh`: passed (fmt check, cargo check, clippy, workspace tests, doc-link integrity).
 
 ## 6. RESIDUAL RISKS
 * TUI state machine complexity may grow; mitigate with focused unit tests per transition.

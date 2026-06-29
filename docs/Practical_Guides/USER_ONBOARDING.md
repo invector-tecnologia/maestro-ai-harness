@@ -37,6 +37,13 @@ maestro tui --config ~/.config/maestro/config.yaml
 - `/onboarding restart project`
 - `/onboarding skip`
 - `/onboarding continue`
+- `/edit` (or `/core`) — open Interview Mode directive governance to Create/Edit/Update/Delete personas, persona skills, and scopes.
+- `/monitor` — return to Workspace Mode (the runtime monitor).
+
+## Modes
+Maestro operates in two intent-driven modes:
+- **Workspace Mode** is the runtime monitor. The Maestro agent orchestrates available agents sequentially with live narration and a heartbeat while any agent runs longer than 5 seconds.
+- **Interview Mode** is the directive governance home. Launch it directly with `maestro directives`, or open it from the TUI with `/edit`. The Maestro persona is immutable and can never be a directive target.
 
 Note:
 - If onboarding is inactive, `/onboarding skip` and `/onboarding continue` are not routed to agents; the TUI suggests `/onboarding restart user|project`.
