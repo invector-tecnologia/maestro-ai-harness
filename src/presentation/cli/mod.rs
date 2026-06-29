@@ -12,8 +12,7 @@ use crate::application::environment::Environment;
 use crate::application::markdown_governance::MarkdownGovernance;
 use crate::application::persona::PersonaCatalog;
 use crate::application::persona_operations::{
-    registrations_from_default_personas, registrations_from_governance,
-    registrations_from_selected_personas,
+    registrations_for_interview, registrations_from_default_personas, registrations_from_governance,
 };
 use crate::application::project_deps::{
     ProjectDependencyCheck, ProjectDepsCheckReport, ProjectDepsConfig,
@@ -580,7 +579,7 @@ async fn run_tui_with_runtime(
 
                     let rt = Arc::new(AgentRuntime::new(Arc::clone(&environment)));
                     if matches!(bootstrap, OnboardingBootstrap::InitInterview) {
-                        match registrations_from_selected_personas(&router, &["Maestro"]) {
+                        match registrations_for_interview(&router) {
                             Ok(registrations) => {
                                 if let Err(error) = rt.start_agents(registrations).await {
                                     let _ = environment

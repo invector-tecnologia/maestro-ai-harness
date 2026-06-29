@@ -143,6 +143,10 @@ struct InterviewRoleState {
     should_respond: bool,
     observed_message: Option<Message>,
     generated_content: Option<String>,
+    /// Recent user/Maestro turns (excluding the message being answered) so the
+    /// interview retains memory across turns instead of treating each answer in
+    /// isolation.
+    transcript: Vec<String>,
 }
 
 /// Single-voice cognitive interview role (Option B).
@@ -189,13 +193,19 @@ impl MaestroInterviewRole {
     }
 
     /// Capability-aware interview prompt that asserts file-authoring authority.
-    fn build_prompt(&self, message: &Message) -> String {
+    fn build_prompt(&self, message: &Message, transcript: &[String]) -> String {
+        let history = if transcript.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nConversation so far:\n{}", transcript.join("\n"))
+        };
         format!(
-            "{}\n\nPersona: {}\nPurpose: {}\nResponsibilities: {}\nUser said: {}",
+            "{}\n\nPersona: {}\nPurpose: {}\nResponsibilities: {}{}\n\nUser said: {}\n\nRespond as Maestro with your next onboarding message: either one focused question, or a short confirmation followed by a fenced json proposal of the files to create.",
             crate::application::interview_bot::maestro_capability_preamble(),
             self.persona.name,
             self.persona.purpose,
             self.persona.responsibilities.join("; "),
+            history,
             message.content()
         )
     }
@@ -220,25 +230,40 @@ impl Role for MaestroInterviewRole {
         if latest.sender() == "user" {
             state.should_respond = true;
             state.observed_message = Some(latest.clone());
+            // Snapshot recent user/Maestro turns (excluding the message being
+            // answered) so the interview keeps context across turns.
+            let prior = messages.len().saturating_sub(1);
+            let mut recent = messages[..prior]
+                .iter()
+                .filter(|msg| {
+                    msg.sender().eq_ignore_ascii_case("user")
+                        || msg.sender().eq_ignore_ascii_case("maestro")
+                })
+                .rev()
+                .take(12)
+                .map(|msg| format!("{}: {}", msg.sender(), msg.content()))
+                .collect::<Vec<_>>();
+            recent.reverse();
+            state.transcript = recent;
         }
 
         Ok(())
     }
 
     async fn think(&self) -> Result<(), RoleError> {
-        let message_to_analyze = {
+        let (message_to_analyze, transcript) = {
             let state = self.state.lock().await;
             if !state.should_respond {
                 return Ok(());
             }
-            state.observed_message.clone()
+            (state.observed_message.clone(), state.transcript.clone())
         };
 
         let Some(message) = message_to_analyze else {
             return Ok(());
         };
 
-        let prompt = self.build_prompt(&message);
+        let prompt = self.build_prompt(&message, &transcript);
         let generated = self.llm_provider.text_only(&prompt).await?;
 
         let mut state = self.state.lock().await;
@@ -352,6 +377,25 @@ pub fn registrations_from_selected_personas(
         .collect::<Vec<_>>();
 
     Ok(registrations)
+}
+
+/// Build the single-agent registration that drives the LLM-led onboarding
+/// interview.
+///
+/// Unlike [`registrations_from_selected_personas`], this binds the
+/// capability-aware [`MaestroInterviewRole`] so the live Maestro asserts its
+/// file-authoring authority, conducts the interview one question at a time, and
+/// emits governed-change proposals as fenced `json` blocks — instead of the
+/// generic, text-only [`PersonaRuntimeRole`] that merely echoes persona prose.
+pub fn registrations_for_interview(
+    router: &ModelRouter,
+) -> Result<Vec<AgentRegistration>, PersonaOperationsError> {
+    let provider = router.route_for("Maestro");
+    let role = MaestroInterviewRole::for_maestro(provider)?;
+    Ok(vec![AgentRegistration {
+        name: "Maestro".to_string(),
+        role: Arc::new(role),
+    }])
 }
 
 #[cfg(test)]
@@ -580,5 +624,79 @@ mod tests {
         // A second act with no new user input stays silent (no double-posting).
         let silent = role.act().await.expect("act idempotent");
         assert!(silent.is_none());
+    }
+
+    #[tokio::test]
+    async fn registrations_for_interview_wire_capability_aware_maestro() {
+        let last_prompt = Arc::new(Mutex::new(None));
+        let proposal = "Sounds good — here is the plan:\n```json\n{\"changes\":[{\"op\":\"create\",\"kind\":\"scope\",\"name\":\"Checkout\",\"file\":\"001-checkout.md\",\"content\":\"# Checkout\"}]}\n```";
+        let provider: Arc<dyn LlmProvider> = Arc::new(CapturingProvider {
+            last_prompt: Arc::clone(&last_prompt),
+            reply: proposal.to_string(),
+        });
+        let router = crate::application::model_router::ModelRouter::uniform(
+            provider,
+            crate::application::model_router::ModelAssignmentLabel {
+                provider: "test".to_string(),
+                model: "dummy".to_string(),
+            },
+        );
+
+        let registrations =
+            registrations_for_interview(&router).expect("interview registration builds");
+        assert_eq!(registrations.len(), 1);
+        assert_eq!(registrations[0].name, "Maestro");
+
+        // Drive the wired role exactly as the runtime would.
+        let role = Arc::clone(&registrations[0].role);
+        let user = Message::new(
+            "user".to_string(),
+            "I want a checkout service".to_string(),
+            None,
+        );
+        role.observe(std::slice::from_ref(&user))
+            .await
+            .expect("observe");
+        role.think().await.expect("think");
+        let produced = role.act().await.expect("act").expect("maestro responds");
+
+        // The wired role uses the capability preamble, not the generic persona prompt.
+        let captured = last_prompt.lock().await.clone().expect("prompt captured");
+        assert!(captured.contains("Create, Read, Update, Edit, and Delete"));
+
+        // Its reply carries a governed-change proposal the interview loop can stage.
+        let parsed =
+            crate::application::interview_bot::parse_directive_proposals(produced.content());
+        assert_eq!(parsed.unwrap_or_default().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn interview_role_carries_conversation_memory() {
+        let last_prompt = Arc::new(Mutex::new(None));
+        let provider: Arc<dyn LlmProvider> = Arc::new(CapturingProvider {
+            last_prompt: Arc::clone(&last_prompt),
+            reply: "And what is your timeline?".to_string(),
+        });
+        let role = MaestroInterviewRole::for_maestro(provider).expect("maestro persona exists");
+
+        let history = vec![
+            Message::new(
+                "Maestro".to_string(),
+                "What are you building?".to_string(),
+                None,
+            ),
+            Message::new("user".to_string(), "A checkout API".to_string(), None),
+            Message::new("user".to_string(), "Using Rust".to_string(), None),
+        ];
+
+        role.observe(&history).await.expect("observe");
+        role.think().await.expect("think");
+        let _ = role.act().await.expect("act");
+
+        let captured = last_prompt.lock().await.clone().expect("prompt captured");
+        assert!(captured.contains("Conversation so far:"));
+        // Prior turns are remembered, and the latest user turn is the focus.
+        assert!(captured.contains("A checkout API"));
+        assert!(captured.contains("Using Rust"));
     }
 }

@@ -365,7 +365,10 @@ pub(super) async fn run_maestro_wakeup_check(
         }
     }
 
-    let wakeup_prompt = "Maestro are you awake?".to_string();
+    let wakeup_prompt = "Let's begin onboarding. Briefly greet me, then ask your first \
+focused question to understand the project I want to build. Ask one question at a time, \
+and once you understand enough, propose the persona, skill, and scope files to create."
+        .to_string();
     let probe = Message::new("user".to_string(), wakeup_prompt, None);
     app.maestro_message_id = Some(probe.id());
     let _ = env.publish(probe).await;
@@ -384,7 +387,7 @@ pub(super) async fn run_maestro_wakeup_check(
 
         if answered {
             app.logs
-                .push("✅ Maestro persona responded and is ready for interview.".to_string());
+                .push("✅ Maestro is leading the interview — answer below.".to_string());
             return true;
         }
     }

@@ -294,12 +294,14 @@ pub async fn run_tui(
             }
         }
 
-        if matches!(_bootstrap, OnboardingBootstrap::InitInterview) && app.readiness.is_ready() {
-            app.logs
-                .push("🟢 Readiness is green. Waking up Maestro persona...".to_string());
+        if maestro_online {
+            // Live LLM interview: wake the capability-aware Maestro role on the
+            // bus so it greets the user and asks the first onboarding question.
+            // The role is the single Maestro voice and authors governed-file
+            // proposals; if it does not answer, fall back to the scripted path.
             let awake =
                 run_maestro_wakeup_check(&mut app, environment.as_ref(), runtime.as_ref()).await;
-            if awake {
+            if !awake {
                 enqueue_interview_question(&mut app, environment.as_ref()).await?;
             }
         } else {
