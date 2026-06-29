@@ -16,12 +16,22 @@ Fire up the TUI. Define your personas, scopes, and skills. Watch your AI team sy
 
 **▓▒░ SYNTH PROFILE ░▒▓**
 
+## Contents
+
+* [Core Capabilities](#-core-capabilities)
+* [Feature Status](#-feature-status)
+* [Boot Sequence](#-boot-sequence)
+* [Control Deck Initialization](#-control-deck-initialization)
+* [Command Execution](#-command-execution)
+* [Governance Override](#-governance-override)
+* [Reference Grid](#-reference-grid)
+
 ## 🌟 Core Capabilities
 
 Maestro is **Rust-native**. Fast. Uncompromising. It delivers a rich **TUI** (Terminal User Interface) with menus, tables, real-time logs, and keyboard shortcuts—all without terminal bloat or command memorization.
 
 ### ⚡ What You Control
-* **✅ AI Synthesis (Operational):** Connect **Ollama** (run models locally, free). Provider registry foundation complete. Google Gemini, OpenAI integration planned for v0.2+.
+* **✅ Multi-Provider AI Synthesis (Operational):** Run models locally and free with **Ollama** (no API key), or connect **OpenAI**, **Anthropic**, and **Google Gemini** with API credentials. All four adapters are registered in the provider registry. **Per-agent model routing** lets each persona run a different model — see [Control Deck Initialization](#-control-deck-initialization). Cloud providers require valid API keys; reliability hardening continues through v0.2+.
 * **🚧 Governance Codex (In Progress):** Define *Personas* (AI profiles), *Scopes* (execution domains), *Skills* (tool capabilities). Core persona/scope creation works; skill system and compliance enforcement in development.
 * **📋 Secure Credentials (Planned):** OAuth2 browser login to Google Gemini planned. Basic local config auth operational; keychain integration roadmap v0.2+.
 * **✅ Agent Observability (Operational):** Tracing of agent decisions and token usage implemented. Cost tracking and full audit logs planned for v0.2+.
@@ -50,7 +60,7 @@ Maestro's capabilities are organized by maturity level. **Current release: 0.1.0
 | Level | Status | Examples |
 |-------|--------|----------|
 | **Foundational** | ✅ Complete | `maestro init`, config validation, readiness checks, markdown scaffolding |
-| **Core** | 🚧 Partial | Multi-agent runtime (basic), TUI dashboard, Ollama provider, persona/scope creation |
+| **Core** | 🚧 Partial | Multi-agent runtime (basic), TUI dashboard, multi-provider adapters (Ollama/OpenAI/Anthropic/Gemini) + per-agent model routing, persona/scope creation |
 | **Advanced** | 📋 Planned | Guided onboarding resumption, accessibility controls, cross-platform packaging |
 | **Enterprise** | 📋 Roadmap | Compliance reporting, policy extension, audit analytics |
 
@@ -69,9 +79,9 @@ Run this one-liner to synthesize and install:
 
 **Copy and paste this command, then press `Enter`:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/invector-tecnologia/maestro-multi-agents/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/invector-tecnologia/maestro-ai-harness/main/scripts/install.sh | bash
 ```
-*Note: You may need to enter your system password to install. Characters won't show as you type—this is normal. Just type and press Enter. This builds and installs from source for testing/development environments.*
+*Note: You may need to enter your system password to install. Characters won't show as you type—this is normal. Just type and press Enter. The installer downloads a pre-compiled release binary when one is available for your platform, and automatically falls back to building from source (requires the Rust toolchain) otherwise.*
 
 ---
 
@@ -151,10 +161,12 @@ agents:
   "Software Engineer":
     provider: "anthropic"
     model: "claude-3-opus"
-  "Researcher":
+  "Quality Assurance":
     provider: "ollama"
     model: "mistral"
 ```
+
+> The keys above are persona names (the default catalog ships `Maestro`, `Project Manager`, `Quality Assurance`, `User Experience`, `Software Engineer`). Every provider and model referenced under `agents:` must also be declared under `providers:`. See [`maestro/config.yml.example`](maestro/config.yml.example) for a complete multi-provider catalog.
 
 ---
 
@@ -230,3 +242,5 @@ The `docs/` folder is your knowledge base, organized by execution domain:
 * **`docs/Practical_Guides/`** — Tutorials: onboarding, smoke tests, adoption playbooks.
 * **`docs/User_Manual/`** — Runtime reference: commands, panels, day-to-day operations.
 * **`docs/Maestro_Manifesto/`** — Architecture truth: design philosophy, conventions, feature matrix, value streams.
+
+**Project meta:** [Contributing Guide](CONTRIBUTING.md) · [Security Policy](.github/SECURITY.md) · [License (MIT)](LICENSE)
