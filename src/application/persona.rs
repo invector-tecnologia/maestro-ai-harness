@@ -135,7 +135,7 @@ impl Persona {
     /// Render this persona as canonical governance markdown.
     ///
     /// The schema is the single source of truth shared by the runtime catalog,
-    /// the Core Mode editor, and `maestro scaffold-markdown`.
+    /// the Architect Mode editor, and `maestro scaffold-markdown`.
     pub fn to_markdown(&self) -> String {
         let bullet_block = |items: &[String]| -> String {
             items
@@ -298,7 +298,7 @@ impl PersonaCatalog {
     /// Resolve the runtime persona catalog from governed markdown, falling back
     /// to the in-code defaults when governance is empty, missing, or invalid.
     ///
-    /// This is the single resolution point that makes Core Mode persona edits
+    /// This is the single resolution point that makes Architect Mode persona edits
     /// drive the runtime agent set while never panicking on a malformed file.
     pub fn from_governance(
         governance: &crate::application::markdown_governance::MarkdownGovernance,

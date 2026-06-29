@@ -42,6 +42,9 @@ pub enum UIMode {
     #[default]
     Workspace,
     HelpMenu,
+    /// Architect Mode: the directive-governance picker (select stage) where
+    /// personas, persona skills, and scopes are chosen for authoring.
+    Architect,
     Interview,
 }
 
@@ -124,7 +127,7 @@ impl ReadinessAction {
     }
 }
 
-/// Directive families presented in Core Mode, grouped for the picker.
+/// Directive families presented in Architect Mode, grouped for the picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirectiveGroup {
     Personas,
@@ -142,9 +145,9 @@ impl DirectiveGroup {
     }
 }
 
-/// A selectable directive entry in the Core Mode picker.
+/// A selectable directive entry in the Architect Mode picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CoreEntry {
+struct ArchitectEntry {
     group: DirectiveGroup,
     label: String,
     file_name: String,
@@ -152,7 +155,7 @@ struct CoreEntry {
     read_only: bool,
 }
 
-impl CoreEntry {
+impl ArchitectEntry {
     /// Resolve the interview directive target this entry represents.
     fn directive_target(&self) -> crate::application::interview_bot::DirectiveTarget {
         use crate::application::interview_bot::DirectiveTarget;
@@ -175,14 +178,14 @@ impl CoreEntry {
     }
 }
 
-/// Interactive directives hub state for Core (Architect's) Mode.
+/// Interactive directives hub state for Architect Mode.
 #[derive(Debug, Clone, Default)]
-struct CorePicker {
-    entries: Vec<CoreEntry>,
+struct ArchitectPicker {
+    entries: Vec<ArchitectEntry>,
     cursor: usize,
 }
 
-impl CorePicker {
+impl ArchitectPicker {
     /// Build the picker from on-disk governance state, grouped by directive type.
     ///
     /// Maestro persona and its skills are listed but flagged read-only so they
@@ -193,7 +196,7 @@ impl CorePicker {
         let personas = governance.list_personas().unwrap_or_default();
         for file_name in &personas {
             let read_only = is_maestro_directive_file(file_name);
-            entries.push(CoreEntry {
+            entries.push(ArchitectEntry {
                 group: DirectiveGroup::Personas,
                 label: directive_stem(file_name),
                 file_name: file_name.clone(),
@@ -207,7 +210,7 @@ impl CorePicker {
             let read_only = is_maestro_directive_name(&persona_key);
             let skills = governance.list_skills(&persona_key).unwrap_or_default();
             for file_name in skills {
-                entries.push(CoreEntry {
+                entries.push(ArchitectEntry {
                     group: DirectiveGroup::Skills,
                     label: format!("{}/{}", persona_key, directive_stem(&file_name)),
                     file_name,
@@ -218,7 +221,7 @@ impl CorePicker {
         }
 
         for file_name in governance.list_scopes().unwrap_or_default() {
-            entries.push(CoreEntry {
+            entries.push(ArchitectEntry {
                 group: DirectiveGroup::Scopes,
                 label: directive_stem(&file_name),
                 file_name,
@@ -242,7 +245,7 @@ impl CorePicker {
         }
     }
 
-    fn selected(&self) -> Option<&CoreEntry> {
+    fn selected(&self) -> Option<&ArchitectEntry> {
         self.entries.get(self.cursor)
     }
 }
@@ -285,8 +288,8 @@ pub struct TuiApp {
     maestro_message_id: Option<Uuid>,
     approval_modal_visible: bool,
     last_runtime_event_count: usize,
-    // Core (Architect's) Mode directives picker
-    core_picker: Option<CorePicker>,
+    // Architect Mode directives picker
+    architect_picker: Option<ArchitectPicker>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -344,8 +347,9 @@ impl TuiApp {
             .push("  /new scope     - Create a new work scope".to_string());
         self.logs
             .push("  /new skill     - Teach a new skill to an agent".to_string());
-        self.logs
-            .push("  /core          - Open Core Mode directives hub (edit/archive)".to_string());
+        self.logs.push(
+            "  /architect     - Open Architect Mode directives hub (edit/archive)".to_string(),
+        );
         self.logs
             .push("  /monitor       - Return to the runtime workspace monitor".to_string());
         self.logs
@@ -381,15 +385,15 @@ impl TuiApp {
 
     pub fn return_to_workspace(&mut self) {
         self.mode = UIMode::Workspace;
-        self.core_picker = None;
+        self.architect_picker = None;
     }
 
-    /// Enter the Interview Mode directive select stage and build the picker from disk.
+    /// Enter Architect Mode (the directive select stage) and build the picker from disk.
     fn enter_directive_select(&mut self, governance: &MarkdownGovernance) {
-        let picker = CorePicker::from_governance(governance);
+        let picker = ArchitectPicker::from_governance(governance);
         let count = picker.entries.len();
-        self.core_picker = Some(picker);
-        self.mode = UIMode::Interview;
+        self.architect_picker = Some(picker);
+        self.mode = UIMode::Architect;
         self.logs.push(format!(
             "\u{1f4cb} Directives editor \u{2014} {count} directive(s). Up/Down navigate, Enter select, Esc back."
         ));
@@ -399,8 +403,10 @@ impl TuiApp {
     ///
     /// Returns `None` when the selection targets the immutable Maestro persona,
     /// enforcing read-only at the presentation boundary (defense in depth).
-    fn core_selection_target(&self) -> Option<crate::application::interview_bot::DirectiveTarget> {
-        let entry = self.core_picker.as_ref()?.selected()?;
+    fn architect_selection_target(
+        &self,
+    ) -> Option<crate::application::interview_bot::DirectiveTarget> {
+        let entry = self.architect_picker.as_ref()?.selected()?;
         if entry.read_only {
             return None;
         }
@@ -805,17 +811,17 @@ impl TuiApp {
             }
         }
 
-        // Interview select stage: directives picker (folded former Core Mode)
-        if self.mode == UIMode::Interview && self.core_picker.is_some() {
+        // Architect Mode: directives picker (select stage)
+        if self.mode == UIMode::Architect {
             match key.code {
                 KeyCode::Up => {
-                    if let Some(picker) = &mut self.core_picker {
+                    if let Some(picker) = &mut self.architect_picker {
                         picker.move_up();
                     }
                     return None;
                 }
                 KeyCode::Down => {
-                    if let Some(picker) = &mut self.core_picker {
+                    if let Some(picker) = &mut self.architect_picker {
                         picker.move_down();
                     }
                     return None;
@@ -827,7 +833,7 @@ impl TuiApp {
                 }
                 KeyCode::Enter => {
                     let selected = self
-                        .core_picker
+                        .architect_picker
                         .as_ref()
                         .and_then(|picker| picker.selected())
                         .map(|entry| {
@@ -850,21 +856,23 @@ impl TuiApp {
                             ));
                             None
                         }
-                        Some((file_name, false, label)) => match self.core_selection_target() {
-                            Some(target) => {
-                                self.logs.push(format!(
-                                    "✏️ Editing {} directive: {label}",
-                                    target.kind_label()
-                                ));
-                                Some(UserAction::StartDirectiveAuthoring {
+                        Some((file_name, false, label)) => {
+                            match self.architect_selection_target() {
+                                Some(target) => {
+                                    self.logs.push(format!(
+                                        "✏️ Editing {} directive: {label}",
+                                        target.kind_label()
+                                    ));
+                                    Some(UserAction::StartDirectiveAuthoring {
                                     target,
                                     operation:
                                         crate::application::interview_bot::DirectiveOperation::Edit,
                                     file_name,
                                 })
+                                }
+                                None => None,
                             }
-                            None => None,
-                        },
+                        }
                     };
                 }
                 _ => return None,
@@ -950,7 +958,7 @@ impl TuiApp {
                         }
                     }
                     None
-                } else if command == "/core" || command == "/edit" {
+                } else if command == "/architect" || command == "/core" {
                     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
                     let governance = MarkdownGovernance::new(root);
                     self.enter_directive_select(&governance);
@@ -1197,7 +1205,7 @@ pub async fn run_tui(
         );
     } else if matches!(_bootstrap, OnboardingBootstrap::DirectiveGovernance) {
         app.logs.push(
-            "📋 Interview Mode — directive governance. Pick a directive to author (Esc to monitor)."
+            "📋 Architect Mode — directive governance. Pick a directive to author (Esc to monitor)."
                 .to_string(),
         );
         app.enter_directive_select(&governance);
@@ -1380,7 +1388,7 @@ pub async fn run_tui(
                                         ));
                                         app.interview_session =
                                             Some(Arc::new(tokio::sync::RwLock::new(session)));
-                                        app.core_picker = None;
+                                        app.architect_picker = None;
                                         app.mode = UIMode::Interview;
                                         app.approval_modal_visible = false;
                                         let _ = enqueue_directive_question(&mut app, environment.as_ref())
@@ -1525,8 +1533,8 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<
 pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
 
-    // Interview select stage: directives picker (folded former Core Mode)
-    if app.mode == UIMode::Interview && app.core_picker.is_some() {
+    // Architect Mode: directives picker (select stage)
+    if app.mode == UIMode::Architect {
         let select_rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1537,7 +1545,7 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
             .split(area);
 
         render_logo_panel(frame, select_rows[0]);
-        render_core_panel(frame, select_rows[1], app);
+        render_architect_panel(frame, select_rows[1], app);
         render_input_panel(frame, select_rows[2], app);
         return;
     }
@@ -1645,14 +1653,14 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     render_input_panel(frame, command_rows[1], app);
 }
 
-fn render_core_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
+fn render_architect_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
     let mut lines = vec![
-        "Core Mode — Project Directives".to_string(),
+        "Architect Mode — Project Directives".to_string(),
         "Up/Down navigate · Enter select · Esc back to monitor".to_string(),
         String::new(),
     ];
 
-    match &app.core_picker {
+    match &app.architect_picker {
         Some(picker) if !picker.entries.is_empty() => {
             let mut current_group: Option<DirectiveGroup> = None;
             for (index, entry) in picker.entries.iter().enumerate() {
@@ -1683,7 +1691,7 @@ fn render_core_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &T
         .style(Style::default().fg(Color::White))
         .block(
             Block::default()
-                .title("Core (Architect's) Mode")
+                .title("Architect Mode")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan)),
         );
@@ -2966,7 +2974,7 @@ mod tests {
             maestro_message_id: None,
             approval_modal_visible: false,
             last_runtime_event_count: 0,
-            core_picker: None,
+            architect_picker: None,
         };
 
         let drawn = terminal.draw(|frame| render(frame, &app));
@@ -3778,12 +3786,12 @@ mod tests {
     }
 
     #[test]
-    fn core_picker_groups_directives_and_flags_maestro_read_only() {
+    fn architect_picker_groups_directives_and_flags_maestro_read_only() {
         let root = temp_root("maestro-core-picker");
         let governance = MarkdownGovernance::new(&root);
         seed_core_directives(&governance);
 
-        let picker = CorePicker::from_governance(&governance);
+        let picker = ArchitectPicker::from_governance(&governance);
 
         let maestro_persona = picker
             .entries
@@ -3817,22 +3825,22 @@ mod tests {
     }
 
     #[test]
-    fn core_selection_target_blocks_maestro_and_resolves_others() {
+    fn architect_selection_target_blocks_maestro_and_resolves_others() {
         let root = temp_root("maestro-core-selection");
         let governance = MarkdownGovernance::new(&root);
         seed_core_directives(&governance);
 
         let mut app = TuiApp {
-            core_picker: Some(CorePicker::from_governance(&governance)),
-            mode: UIMode::Interview,
+            architect_picker: Some(ArchitectPicker::from_governance(&governance)),
+            mode: UIMode::Architect,
             ..TuiApp::default()
         };
 
         // Cursor starts at the first entry (maestro persona, read-only).
-        assert!(app.core_selection_target().is_none());
+        assert!(app.architect_selection_target().is_none());
 
         // Move to the first non-read-only entry and confirm it resolves.
-        if let Some(picker) = &mut app.core_picker {
+        if let Some(picker) = &mut app.architect_picker {
             while picker
                 .selected()
                 .map(|entry| entry.read_only)
@@ -3845,26 +3853,55 @@ mod tests {
                 }
             }
         }
-        assert!(app.core_selection_target().is_some());
+        assert!(app.architect_selection_target().is_some());
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn core_command_enters_mode_and_monitor_returns_to_workspace() {
+    fn architect_command_enters_mode_and_monitor_returns_to_workspace() {
         let root = temp_root("maestro-core-command");
         let governance = MarkdownGovernance::new(&root);
         seed_core_directives(&governance);
 
         let mut app = TuiApp::default();
         app.enter_directive_select(&governance);
-        assert_eq!(app.mode, UIMode::Interview);
-        assert!(app.core_picker.is_some());
+        assert_eq!(app.mode, UIMode::Architect);
+        assert!(app.architect_picker.is_some());
 
         app.return_to_workspace();
         assert_eq!(app.mode, UIMode::Workspace);
-        assert!(app.core_picker.is_none());
+        assert!(app.architect_picker.is_none());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn slash_commands_route_to_architect_mode() {
+        // `/architect` is the canonical command.
+        let mut app = TuiApp {
+            input: "/architect".to_string(),
+            ..Default::default()
+        };
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(action.is_none());
+        assert_eq!(app.mode, UIMode::Architect);
+
+        // `/core` remains a back-compat alias.
+        let mut app = TuiApp {
+            input: "/core".to_string(),
+            ..Default::default()
+        };
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(action.is_none());
+        assert_eq!(app.mode, UIMode::Architect);
+
+        // `/edit` is no longer a mode command and must not enter Architect Mode.
+        let mut app = TuiApp {
+            input: "/edit".to_string(),
+            ..Default::default()
+        };
+        let _ = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_ne!(app.mode, UIMode::Architect);
     }
 }

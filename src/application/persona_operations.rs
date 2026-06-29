@@ -155,7 +155,7 @@ pub fn registrations_from_default_personas(
 }
 
 /// Build runtime registrations from the governed persona catalog, resolving
-/// Core Mode edits into the live agent set. Falls back to in-code defaults when
+/// Architect Mode edits into the live agent set. Falls back to in-code defaults when
 /// governance is empty or invalid (handled inside `PersonaCatalog::from_governance`).
 pub fn registrations_from_governance(
     llm_provider: Arc<dyn LlmProvider>,

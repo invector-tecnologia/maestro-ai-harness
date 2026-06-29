@@ -54,7 +54,7 @@ maestro directives --config ~/.config/maestro/config.yaml
 maestro run --config ~/.config/maestro/config.yaml --duration-ms 500
 ```
 
-Use `maestro directives` (or `/edit` inside the TUI) to govern personas, persona skills, and scopes; return to the monitor with `/monitor`.
+Use `maestro directives` (or `/architect` inside the TUI) to govern personas, persona skills, and scopes; return to the monitor with `/monitor`.
 
 ## Troubleshooting
 - If the flow is in an unexpected stage, use:

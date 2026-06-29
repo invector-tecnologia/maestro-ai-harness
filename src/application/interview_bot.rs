@@ -17,7 +17,7 @@ pub struct InterviewExchange {
     pub timestamp: SystemTime,
 }
 
-/// Directive operation requested through Core Mode and authored via Interview Mode.
+/// Directive operation requested through Architect Mode and authored via the guided interview.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DirectiveOperation {
     #[default]
@@ -47,7 +47,7 @@ impl DirectiveOperation {
     }
 }
 
-/// Directive target a Core Mode operation acts upon.
+/// Directive target an Architect Mode operation acts upon.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DirectiveTarget {
     Persona { name: String },
@@ -248,7 +248,7 @@ impl Default for InterviewSession {
 }
 
 impl InterviewSession {
-    /// Build a directive-scoped session for a validated Core Mode operation.
+    /// Build a directive-scoped session for a validated Architect Mode operation.
     pub fn for_directive(
         operation: DirectiveOperation,
         target: DirectiveTarget,

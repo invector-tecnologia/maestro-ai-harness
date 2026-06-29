@@ -698,7 +698,7 @@ fn scaffold_scope(governance: &MarkdownGovernance) -> Result<()> {
 
 fn scaffold_personas(governance: &MarkdownGovernance) -> Result<()> {
     // Emit the canonical persona schema directly from the runtime catalog so the
-    // scaffolded files, the Core Mode editor, and the live agents share one source
+    // scaffolded files, the Architect Mode editor, and the live agents share one source
     // of truth.
     for persona in PersonaCatalog::default_personas().personas {
         let slug = persona.name.to_lowercase().replace(' ', "-");
