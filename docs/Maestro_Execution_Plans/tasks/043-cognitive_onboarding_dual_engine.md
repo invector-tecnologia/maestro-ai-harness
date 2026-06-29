@@ -189,6 +189,21 @@ _To be filled at completion of each increment with executed commands and outcome
   `query_without_observer_returns_answer`.
 * `scripts/check-doc-links.sh` — link integrity passed.
 
+### PR6 — Orchestration SENSE pre-stage + canonical pattern doc (AC7)
+* `AgentRuntime::orchestrate_as_maestro` (`src/application/agent_runtime.rs`) now emits a
+  `MaestroNarration { phase: "sense" }` event before planning, observing the incoming
+  demand — making the orchestrator narrate the full `sense → plan → delegate → audit →
+  deliver` cycle.
+* Created `docs/Maestro_Manifesto/reference/COGNITIVE_PATTERN.md` documenting the
+  canonical `SENSE → OBSERVE → THINK → ACT → AUDIT → DELIVER` cycle and its code map.
+  Linked it from `docs/Maestro_Manifesto/ARCHITECTURE.md` (new section 3) and
+  `docs/Maestro_Manifesto/reference/00_INDEX.md` (docs sync).
+* `cargo fmt --all` — clean.
+* `cargo clippy --all-targets -- -D warnings` — no warnings.
+* `cargo test --all-targets` — 182 passed; 0 failed. New test:
+  `maestro_orchestration_senses_demand_before_planning` (asserts sense precedes plan).
+* `scripts/check-doc-links.sh` — link integrity passed.
+
 ## 6. RESIDUAL RISKS
 * Gemini model enumeration is awkward against a `generateContent` endpoint; PR1 verifies
   access-token acquisition (auth) rather than a full catalog listing and documents the

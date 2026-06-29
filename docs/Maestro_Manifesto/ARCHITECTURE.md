@@ -23,3 +23,11 @@ src/
 └── presentation/   # Entry points and UX surfaces.
     └── cli/        # CLI argument parsing (clap) and startup wiring.
 ```
+
+## 3. Canonical Cognitive Pattern
+Every agent — personas, onboarding, retrieval, and the orchestrator — runs the same
+cognitive cycle: **SENSE → OBSERVE → THINK → ACT → AUDIT → DELIVER**. The innermost
+`observe → think → act` loop is the `Role` trait; `SENSE`, `AUDIT`, and `DELIVER` are
+orchestration-level stages that wrap it during collaboration. See
+[reference/COGNITIVE_PATTERN.md](reference/COGNITIVE_PATTERN.md) for the canonical
+definition and the code map.

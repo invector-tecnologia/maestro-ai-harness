@@ -274,6 +274,24 @@ impl AgentRuntime {
 
         let worker_order: Vec<String> = workers.iter().map(|reg| reg.name.clone()).collect();
 
+        // SENSE: before planning, Maestro observes the incoming demand. This is
+        // the entry point of the shared `observe -> think -> act` cognitive
+        // cycle applied at the orchestration level.
+        record_event(
+            &event_tx,
+            &history,
+            RuntimeEvent::MaestroNarration {
+                agent_name: maestro.name.clone(),
+                phase: "sense".to_string(),
+                detail: format!(
+                    "sensing demand from {} ({} char(s)) before planning",
+                    trigger.sender(),
+                    trigger.content().chars().count()
+                ),
+            },
+        )
+        .await;
+
         // PLAN: Maestro reasons over the demand to produce an orchestration brief.
         record_event(
             &event_tx,
@@ -1276,6 +1294,49 @@ mod tests {
             2
         );
         assert!(phases.contains(&"deliver".to_string()));
+    }
+
+    #[tokio::test]
+    async fn maestro_orchestration_senses_demand_before_planning() {
+        let environment = Arc::new(Environment::new(32));
+        let runtime = AgentRuntime::new(Arc::clone(&environment));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let maestro = sequential_registration("Maestro", &log, Duration::ZERO, false);
+        let workers = vec![sequential_registration(
+            "alpha",
+            &log,
+            Duration::ZERO,
+            false,
+        )];
+
+        let _report = runtime
+            .orchestrate_as_maestro(
+                maestro,
+                workers,
+                Message::new("user".to_string(), "go".to_string(), None),
+                Duration::from_secs(5),
+            )
+            .await;
+
+        let events = runtime.events_snapshot().await;
+        let phases: Vec<String> = events
+            .iter()
+            .filter_map(|entry| match &entry.event {
+                RuntimeEvent::MaestroNarration { phase, .. } => Some(phase.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let sense_index = phases.iter().position(|phase| phase == "sense");
+        let plan_index = phases.iter().position(|phase| phase == "plan");
+        assert!(sense_index.is_some(), "expected a sense phase");
+        assert!(plan_index.is_some(), "expected a plan phase");
+        assert!(
+            sense_index < plan_index,
+            "sense must precede plan, got {:?}",
+            phases
+        );
     }
 
     #[tokio::test]
