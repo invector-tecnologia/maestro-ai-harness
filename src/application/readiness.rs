@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use crate::application::config::ConfigLoader;
 use crate::application::markdown_governance::MarkdownGovernance;
+use crate::domain::ports::llm_provider::ProviderStatus;
+use crate::infrastructure::llm::provider_registry::ProviderRegistry;
 
 #[derive(Debug, Clone)]
 pub struct ReadinessItem {
@@ -23,6 +25,10 @@ pub struct ReadinessState {
     pub has_scopes: bool,
     pub has_personas: bool,
     pub has_skills: bool,
+    /// SENSE-stage signal: the default provider is reachable, authenticated, and
+    /// actually serving its configured model. Populated only by the async
+    /// `run_checks_with_probe`; the synchronous `run_checks` leaves it `false`.
+    pub model_loaded: bool,
 }
 
 impl ReadinessState {
@@ -145,7 +151,49 @@ pub fn run_checks(root: &Path) -> ReadinessState {
         has_scopes,
         has_personas,
         has_skills,
+        model_loaded: false,
     }
+}
+
+/// SENSE stage: resolve the default provider and probe whether its configured
+/// model is actually being served.
+///
+/// Returns `ProviderStatus::Unreachable` when no valid config or default provider
+/// can be resolved, so callers can treat it as "no model loaded" without special
+/// casing.
+pub async fn probe_default_provider(root: &Path) -> ProviderStatus {
+    let maestro_dir = root.join("maestro");
+    let config_path = match crate::application::config::existing_config_in(&maestro_dir) {
+        Some(path) => path,
+        None => return ProviderStatus::Unreachable,
+    };
+
+    let config = match ConfigLoader::load(Some(config_path)) {
+        Ok(config) => config,
+        Err(_) => return ProviderStatus::Unreachable,
+    };
+
+    let mut registry = ProviderRegistry::new();
+    if registry.register_builtin_providers().is_err() {
+        return ProviderStatus::Unreachable;
+    }
+    let resolved = match registry.resolve_default(&config) {
+        Ok(resolved) => resolved,
+        Err(_) => return ProviderStatus::Unreachable,
+    };
+
+    resolved.provider.probe().await
+}
+
+/// Async variant of [`run_checks`] that additionally performs the SENSE-stage
+/// model-availability probe and records the result in `model_loaded`.
+pub async fn run_checks_with_probe(root: &Path) -> ReadinessState {
+    let mut state = run_checks(root);
+    state.model_loaded = matches!(
+        probe_default_provider(root).await,
+        ProviderStatus::Available
+    );
+    state
 }
 
 pub fn check_readiness() -> bool {
@@ -342,6 +390,33 @@ mod tests {
 
         let loaded = ConfigLoader::load(Some(config_path));
         assert!(loaded.is_ok());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn run_checks_leaves_model_loaded_false() {
+        let root = temp_root("maestro-readiness-model-loaded");
+        let created = std::fs::create_dir_all(&root);
+        assert!(created.is_ok());
+
+        let state = run_checks(&root);
+        assert!(!state.model_loaded);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn probe_default_provider_is_unreachable_without_config() {
+        let root = temp_root("maestro-readiness-probe-noconfig");
+        let created = std::fs::create_dir_all(&root);
+        assert!(created.is_ok());
+
+        let status = probe_default_provider(&root).await;
+        assert_eq!(status, ProviderStatus::Unreachable);
+
+        let state = run_checks_with_probe(&root).await;
+        assert!(!state.model_loaded);
 
         let _ = std::fs::remove_dir_all(root);
     }

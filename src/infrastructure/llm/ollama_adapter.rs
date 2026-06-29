@@ -10,10 +10,12 @@ use tracing::{error, info};
 
 use crate::application::config::{AuthMode, ProviderConfig};
 use crate::domain::ports::llm_provider::{
-    LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities,
+    LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities, ProviderStatus,
 };
 use crate::domain::ports::role::RoleError;
-use crate::infrastructure::llm::endpoint_utils::normalize_ollama_chat_endpoint;
+use crate::infrastructure::llm::endpoint_utils::{
+    model_in_catalog, normalize_ollama_chat_endpoint, ollama_tags_endpoint,
+};
 use crate::infrastructure::llm::provider_registry::ProviderRegistryError;
 
 pub struct OllamaAdapter {
@@ -122,6 +124,18 @@ struct AssistantMessage {
     content: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct OllamaTagsResponse {
+    #[serde(default)]
+    models: Vec<OllamaTag>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaTag {
+    #[serde(default)]
+    name: String,
+}
+
 #[async_trait]
 impl LlmProvider for OllamaAdapter {
     async fn chat(&self, request: LlmRequest) -> Result<LlmResponse, RoleError> {
@@ -149,6 +163,39 @@ impl LlmProvider for OllamaAdapter {
             supports_json_mode: false,
             supports_reasoning_controls: false,
             max_context_tokens: self.max_context_chars,
+        }
+    }
+
+    async fn probe(&self) -> ProviderStatus {
+        let url = ollama_tags_endpoint(&self.endpoint);
+        let mut request = self.client.get(&url);
+        if let Some(token) = &self.bearer_token {
+            request = request.bearer_auth(token);
+        }
+
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(_) => return ProviderStatus::Unreachable,
+        };
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return ProviderStatus::Unauthorized;
+        }
+        if !status.is_success() {
+            return ProviderStatus::Unreachable;
+        }
+
+        let tags: OllamaTagsResponse = match response.json().await {
+            Ok(tags) => tags,
+            Err(_) => return ProviderStatus::Unreachable,
+        };
+
+        let names = tags.models.iter().map(|m| m.name.as_str());
+        if model_in_catalog(&self.model, names) {
+            ProviderStatus::Available
+        } else {
+            ProviderStatus::ModelMissing
         }
     }
 }

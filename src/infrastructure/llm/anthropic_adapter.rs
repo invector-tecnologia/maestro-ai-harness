@@ -8,9 +8,10 @@ use tracing::{error, info};
 
 use crate::application::config::{AuthMode, ProviderConfig};
 use crate::domain::ports::llm_provider::{
-    LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities,
+    LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities, ProviderStatus,
 };
 use crate::domain::ports::role::RoleError;
+use crate::infrastructure::llm::endpoint_utils::{anthropic_models_endpoint, model_in_catalog};
 use crate::infrastructure::llm::provider_registry::ProviderRegistryError;
 
 pub struct AnthropicAdapter {
@@ -101,6 +102,18 @@ struct ContentBlock {
 struct AnthropicUsage {
     input_tokens: usize,
     output_tokens: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicModelsResponse {
+    #[serde(default)]
+    data: Vec<AnthropicModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicModelEntry {
+    #[serde(default)]
+    id: String,
 }
 
 #[async_trait]
@@ -201,6 +214,41 @@ impl LlmProvider for AnthropicAdapter {
             supports_json_mode: false,
             supports_reasoning_controls: false,
             max_context_tokens: self.max_context_tokens,
+        }
+    }
+
+    async fn probe(&self) -> ProviderStatus {
+        let url = anthropic_models_endpoint(&self.endpoint);
+        let mut request = self.client.get(&url);
+        if let Some(token) = &self.bearer_token {
+            request = request
+                .header("x-api-key", token)
+                .header("anthropic-version", "2023-06-01");
+        }
+
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(_) => return ProviderStatus::Unreachable,
+        };
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return ProviderStatus::Unauthorized;
+        }
+        if !status.is_success() {
+            return ProviderStatus::Unreachable;
+        }
+
+        let models: AnthropicModelsResponse = match response.json().await {
+            Ok(models) => models,
+            Err(_) => return ProviderStatus::Unreachable,
+        };
+
+        let ids = models.data.iter().map(|m| m.id.as_str());
+        if model_in_catalog(&self.model, ids) {
+            ProviderStatus::Available
+        } else {
+            ProviderStatus::ModelMissing
         }
     }
 }

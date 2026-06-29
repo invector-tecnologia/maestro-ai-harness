@@ -17,7 +17,7 @@ use tracing::{error, info};
 
 use crate::application::config::{AuthMode, ProviderConfig};
 use crate::domain::ports::llm_provider::{
-    LlmProvider, LlmRequest, LlmResponse, ProviderCapabilities,
+    LlmProvider, LlmRequest, LlmResponse, ProviderCapabilities, ProviderStatus,
 };
 use crate::domain::ports::role::RoleError;
 use crate::infrastructure::llm::provider_registry::ProviderRegistryError;
@@ -156,6 +156,29 @@ impl LlmProvider for GeminiAdapter {
             supports_reasoning_controls: false,
             max_context_tokens: 1000000,
         }
+    }
+
+    async fn probe(&self) -> ProviderStatus {
+        // Token-based health check only: never trigger an interactive OAuth flow
+        // from the SENSE stage. A cached or refreshable credential is treated as
+        // available; absence of one is reported as unauthorized.
+        if self.bearer_token.read().await.is_some() {
+            return ProviderStatus::Available;
+        }
+
+        if self.auth_mode == AuthMode::Browser {
+            if let Ok(entry) = keyring::Entry::new("maestro_ai", "gemini_refresh_token") {
+                if let Ok(refresh_secret) = entry.get_password() {
+                    if let Ok(access_token) = refresh_access_token(refresh_secret).await {
+                        *self.bearer_token.write().await = Some(access_token);
+                        return ProviderStatus::Available;
+                    }
+                    return ProviderStatus::Unauthorized;
+                }
+            }
+        }
+
+        ProviderStatus::Unauthorized
     }
 }
 

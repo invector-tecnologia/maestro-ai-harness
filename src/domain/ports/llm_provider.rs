@@ -108,6 +108,23 @@ impl Default for ProviderCapabilities {
     }
 }
 
+/// Outcome of the SENSE-stage model-availability probe.
+///
+/// Drives the onboarding dual-engine switch: `Available` selects the LLM-driven
+/// interview (Option B); any other state selects deterministic guided setup
+/// (Option A) until the provider becomes `Available`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderStatus {
+    /// Reachable, authenticated, and the configured model is being served.
+    Available,
+    /// The endpoint could not be reached (network/DNS/connection failure).
+    Unreachable,
+    /// Reached, but authentication was rejected.
+    Unauthorized,
+    /// Reached and authenticated, but the configured model is not listed.
+    ModelMissing,
+}
+
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     /// Full chat-based API with messages, tools, and streaming support
@@ -115,6 +132,19 @@ pub trait LlmProvider: Send + Sync {
 
     /// Returns capabilities of this provider
     fn capabilities(&self) -> ProviderCapabilities;
+
+    /// SENSE stage: probe whether this provider is reachable, authenticated, and
+    /// serving its configured model.
+    ///
+    /// The default implementation performs a minimal completion ping and only
+    /// distinguishes `Available` from `Unreachable`. Concrete adapters override
+    /// this with a real health check (model catalog + auth verification).
+    async fn probe(&self) -> ProviderStatus {
+        match self.text_only("ping").await {
+            Ok(_) => ProviderStatus::Available,
+            Err(_) => ProviderStatus::Unreachable,
+        }
+    }
 
     /// Helper: text-only completion (backward-compatible wrapper around chat)
     async fn text_only(&self, prompt: &str) -> Result<String, RoleError> {
@@ -178,5 +208,12 @@ mod tests {
         let provider: Arc<dyn LlmProvider> = Arc::new(DummyLlmProvider);
 
         assert_shared_object_safe(provider);
+    }
+
+    #[tokio::test]
+    async fn default_probe_reports_available_when_completion_succeeds() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(DummyLlmProvider);
+
+        assert_eq!(provider.probe().await, ProviderStatus::Available);
     }
 }

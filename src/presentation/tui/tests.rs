@@ -49,6 +49,7 @@ fn renders_agents_monitor_and_input_panels() {
             has_scopes: true,
             has_personas: true,
             has_skills: true,
+            model_loaded: true,
         },
         dependency_domains: DependencyDomainsState {
             project_manifest_found: true,
@@ -149,6 +150,7 @@ fn check_command_reports_readiness_gaps() {
             has_scopes: true,
             has_personas: false,
             has_skills: false,
+            model_loaded: false,
         },
         dependency_domains: DependencyDomainsState {
             project_manifest_found: false,
@@ -205,6 +207,7 @@ fn readiness_focus_enter_dispatches_selected_action() {
             has_scopes: true,
             has_personas: false,
             has_skills: true,
+            model_loaded: false,
         },
         dependency_domains: DependencyDomainsState {
             project_manifest_found: true,
@@ -242,6 +245,7 @@ fn readiness_focus_number_shortcuts_execute_actions() {
             has_scopes: true,
             has_personas: false,
             has_skills: true,
+            model_loaded: false,
         },
         dependency_domains: DependencyDomainsState {
             project_manifest_found: true,
@@ -290,6 +294,7 @@ fn readiness_focus_selects_project_dependency_remediation_action() {
             has_scopes: true,
             has_personas: true,
             has_skills: true,
+            model_loaded: true,
         },
         dependency_domains: DependencyDomainsState {
             project_manifest_found: true,

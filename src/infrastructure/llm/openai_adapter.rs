@@ -8,10 +8,12 @@ use tracing::{error, info};
 
 use crate::application::config::{AuthMode, ProviderConfig};
 use crate::domain::ports::llm_provider::{
-    LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities,
+    LlmProvider, LlmRequest, LlmResponse, MessageRole, ProviderCapabilities, ProviderStatus,
 };
 use crate::domain::ports::role::RoleError;
-use crate::infrastructure::llm::endpoint_utils::normalize_chat_completions_endpoint;
+use crate::infrastructure::llm::endpoint_utils::{
+    model_in_catalog, normalize_chat_completions_endpoint, openai_models_endpoint,
+};
 use crate::infrastructure::llm::provider_registry::ProviderRegistryError;
 
 pub struct OpenAiAdapter {
@@ -105,6 +107,18 @@ struct UsageData {
     total_tokens: usize,
 }
 
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    #[serde(default)]
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelEntry {
+    #[serde(default)]
+    id: String,
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiAdapter {
     async fn chat(&self, request: LlmRequest) -> Result<LlmResponse, RoleError> {
@@ -186,6 +200,39 @@ impl LlmProvider for OpenAiAdapter {
             supports_json_mode: true,
             supports_reasoning_controls: true,
             max_context_tokens: self.max_context_tokens,
+        }
+    }
+
+    async fn probe(&self) -> ProviderStatus {
+        let url = openai_models_endpoint(&self.endpoint);
+        let mut request = self.client.get(&url);
+        if let Some(token) = &self.bearer_token {
+            request = request.bearer_auth(token);
+        }
+
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(_) => return ProviderStatus::Unreachable,
+        };
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return ProviderStatus::Unauthorized;
+        }
+        if !status.is_success() {
+            return ProviderStatus::Unreachable;
+        }
+
+        let models: ModelsResponse = match response.json().await {
+            Ok(models) => models,
+            Err(_) => return ProviderStatus::Unreachable,
+        };
+
+        let ids = models.data.iter().map(|m| m.id.as_str());
+        if model_in_catalog(&self.model, ids) {
+            ProviderStatus::Available
+        } else {
+            ProviderStatus::ModelMissing
         }
     }
 }
