@@ -717,6 +717,15 @@ impl TuiApp {
                         agent_name,
                         error_message,
                     } => format!("❌ {} error: {}", agent_name, error_message),
+                    RuntimeEvent::MaestroNarration {
+                        agent_name,
+                        phase,
+                        detail,
+                    } => format!("🎼 {} [{}]: {}", agent_name, phase, detail),
+                    RuntimeEvent::MaestroHeartbeat {
+                        agent_name,
+                        elapsed_secs,
+                    } => format!("💓 {} running ({}s elapsed)", agent_name, elapsed_secs),
                 };
                 evt_desc
             })

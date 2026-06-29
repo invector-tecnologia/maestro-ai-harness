@@ -41,6 +41,17 @@ pub enum RuntimeEvent {
         agent_name: String,
         error_message: String,
     },
+    /// Maestro narrates a transition in the sequential Workspace workflow.
+    MaestroNarration {
+        agent_name: String,
+        phase: String,
+        detail: String,
+    },
+    /// Maestro emits a heartbeat while an agent runs longer than the threshold.
+    MaestroHeartbeat {
+        agent_name: String,
+        elapsed_secs: u64,
+    },
 }
 
 impl RuntimeEvent {
@@ -57,6 +68,8 @@ impl RuntimeEvent {
             RuntimeEvent::SkillExecutionStarted { persona_name, .. } => persona_name.clone(),
             RuntimeEvent::SkillExecutionCompleted { persona_name, .. } => persona_name.clone(),
             RuntimeEvent::ExecutionError { agent_name, .. } => agent_name.clone(),
+            RuntimeEvent::MaestroNarration { agent_name, .. } => agent_name.clone(),
+            RuntimeEvent::MaestroHeartbeat { agent_name, .. } => agent_name.clone(),
         }
     }
 }

@@ -27,6 +27,42 @@ pub struct AgentRegistration {
     pub role: Arc<dyn Role>,
 }
 
+/// Per-agent result of a sequential Maestro-orchestrated workflow run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequentialAgentOutcome {
+    pub agent_name: String,
+    pub succeeded: bool,
+    pub heartbeats: u32,
+    pub output: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Aggregate report for a sequential workflow run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SequentialRunReport {
+    pub outcomes: Vec<SequentialAgentOutcome>,
+}
+
+impl SequentialRunReport {
+    /// Agent execution order (as orchestrated).
+    pub fn order(&self) -> Vec<String> {
+        self.outcomes
+            .iter()
+            .map(|outcome| outcome.agent_name.clone())
+            .collect()
+    }
+
+    /// Count of agents that completed their cycle successfully.
+    pub fn completed(&self) -> usize {
+        self.outcomes.iter().filter(|o| o.succeeded).count()
+    }
+
+    /// Count of agents whose cycle failed (isolated, workflow continued).
+    pub fn failed(&self) -> usize {
+        self.outcomes.iter().filter(|o| !o.succeeded).count()
+    }
+}
+
 struct AgentTask {
     shutdown_tx: oneshot::Sender<()>,
     join_handle: JoinHandle<()>,
@@ -173,6 +209,114 @@ impl AgentRuntime {
     /// Get a snapshot of recent runtime events.
     pub async fn events_snapshot(&self) -> Vec<RuntimeEventWithTimestamp> {
         self.event_history.read().await.clone()
+    }
+
+    /// Orchestrate agents sequentially: each agent starts only after the
+    /// previous finishes. Maestro narrates each transition and emits a
+    /// heartbeat at least every `heartbeat_period` while an agent runs longer
+    /// than that threshold. Per-agent failures are isolated: a failed agent is
+    /// recorded and the workflow continues with the next agent.
+    pub async fn orchestrate_sequential(
+        &self,
+        pipeline: Vec<AgentRegistration>,
+        trigger: Message,
+        heartbeat_period: std::time::Duration,
+    ) -> SequentialRunReport {
+        let event_tx = self.event_tx.clone();
+        let history = Arc::clone(&self.event_history);
+        let environment = Arc::clone(&self.environment);
+        let health = Arc::clone(&self.health);
+
+        let order: Vec<String> = pipeline.iter().map(|reg| reg.name.clone()).collect();
+        record_event(
+            &event_tx,
+            &history,
+            RuntimeEvent::MaestroNarration {
+                agent_name: "Maestro".to_string(),
+                phase: "workflow-start".to_string(),
+                detail: format!(
+                    "orchestrating {} agent(s): {}",
+                    order.len(),
+                    order.join(" → ")
+                ),
+            },
+        )
+        .await;
+
+        let mut report = SequentialRunReport::default();
+        let mut current_input = trigger;
+
+        for registration in pipeline {
+            let name = registration.name.clone();
+            record_event(
+                &event_tx,
+                &history,
+                RuntimeEvent::MaestroNarration {
+                    agent_name: "Maestro".to_string(),
+                    phase: "agent-start".to_string(),
+                    detail: format!("starting {name}"),
+                },
+            )
+            .await;
+
+            let outcome = run_sequential_cycle(
+                &name,
+                registration.role.as_ref(),
+                &current_input,
+                &environment,
+                &health,
+                &event_tx,
+                &history,
+                heartbeat_period,
+            )
+            .await;
+
+            if let Some(output) = &outcome.output {
+                current_input =
+                    Message::new(name.clone(), output.clone(), Some(current_input.id()));
+            }
+
+            record_event(
+                &event_tx,
+                &history,
+                RuntimeEvent::MaestroNarration {
+                    agent_name: "Maestro".to_string(),
+                    phase: if outcome.succeeded {
+                        "agent-complete".to_string()
+                    } else {
+                        "agent-failed".to_string()
+                    },
+                    detail: format!(
+                        "{name} {}",
+                        if outcome.succeeded {
+                            "completed"
+                        } else {
+                            "failed (isolated)"
+                        }
+                    ),
+                },
+            )
+            .await;
+
+            report.outcomes.push(outcome);
+        }
+
+        record_event(
+            &event_tx,
+            &history,
+            RuntimeEvent::MaestroNarration {
+                agent_name: "Maestro".to_string(),
+                phase: "workflow-complete".to_string(),
+                detail: format!(
+                    "{} completed, {} failed",
+                    report.completed(),
+                    report.failed()
+                ),
+            },
+        )
+        .await;
+
+        report
     }
 }
 
@@ -357,6 +501,157 @@ async fn set_health(
 ) {
     let mut guard = health.write().await;
     guard.insert(name.to_string(), state);
+}
+
+/// Run a single agent's observe→think→act cycle as part of a sequential
+/// workflow, emitting a heartbeat at least every `heartbeat_period` while the
+/// cycle runs longer than that threshold. Failures are returned as a non-fatal
+/// outcome so the orchestrator can continue with the next agent.
+#[allow(clippy::too_many_arguments)]
+async fn run_sequential_cycle(
+    agent_name: &str,
+    role: &dyn Role,
+    input: &Message,
+    environment: &Arc<Environment>,
+    health: &Arc<RwLock<HashMap<String, AgentHealth>>>,
+    event_tx: &broadcast::Sender<RuntimeEventWithTimestamp>,
+    history: &Arc<RwLock<Vec<RuntimeEventWithTimestamp>>>,
+    heartbeat_period: std::time::Duration,
+) -> SequentialAgentOutcome {
+    let started = std::time::Instant::now();
+    let mut heartbeats: u32 = 0;
+
+    set_health(health, agent_name, AgentHealth::Observing).await;
+
+    // The observe→think→act cycle, narrating each phase between awaits.
+    let cycle = async {
+        record_event(
+            event_tx,
+            history,
+            RuntimeEvent::AgentObserving {
+                agent_name: agent_name.to_string(),
+                message_id: input.id().to_string(),
+            },
+        )
+        .await;
+        role.observe(std::slice::from_ref(input)).await?;
+
+        set_health(health, agent_name, AgentHealth::Thinking).await;
+        record_event(
+            event_tx,
+            history,
+            RuntimeEvent::AgentThinking {
+                agent_name: agent_name.to_string(),
+                context: format!("analyzing: {}", input.content()),
+            },
+        )
+        .await;
+        role.think().await?;
+
+        set_health(health, agent_name, AgentHealth::Acting).await;
+        record_event(
+            event_tx,
+            history,
+            RuntimeEvent::AgentActing {
+                agent_name: agent_name.to_string(),
+                decision: "preparing response".to_string(),
+            },
+        )
+        .await;
+        role.act().await
+    };
+    tokio::pin!(cycle);
+
+    let mut ticker = tokio::time::interval(heartbeat_period);
+    // Consume the immediate first tick so heartbeats only fire after the period.
+    ticker.tick().await;
+
+    let cycle_result = loop {
+        tokio::select! {
+            result = &mut cycle => break result,
+            _ = ticker.tick() => {
+                if started.elapsed() >= heartbeat_period {
+                    heartbeats += 1;
+                    record_event(
+                        event_tx,
+                        history,
+                        RuntimeEvent::MaestroHeartbeat {
+                            agent_name: agent_name.to_string(),
+                            elapsed_secs: started.elapsed().as_secs(),
+                        },
+                    )
+                    .await;
+                }
+            }
+        }
+    };
+
+    match cycle_result {
+        Ok(maybe_outgoing) => {
+            let output = maybe_outgoing.as_ref().map(|m| m.content().to_string());
+            if let Some(outgoing) = maybe_outgoing {
+                record_event(
+                    event_tx,
+                    history,
+                    RuntimeEvent::AgentActed {
+                        agent_name: agent_name.to_string(),
+                        output: outgoing.content().to_string(),
+                        handoff_target: None,
+                    },
+                )
+                .await;
+                let published = environment.publish(outgoing).await;
+                if let Err(EnvironmentError::NoSubscribers) = published {
+                    debug!(agent = %agent_name, "output dropped: no subscribers");
+                }
+            }
+            set_health(health, agent_name, AgentHealth::Idle).await;
+            SequentialAgentOutcome {
+                agent_name: agent_name.to_string(),
+                succeeded: true,
+                heartbeats,
+                output,
+                error: None,
+            }
+        }
+        Err(error) => {
+            // Per-agent failure isolation: record and continue the workflow.
+            publish_runtime_error(
+                Arc::clone(environment),
+                event_tx.clone(),
+                agent_name,
+                format!("sequential cycle failed: {error}"),
+            )
+            .await;
+            set_health(health, agent_name, AgentHealth::Failed).await;
+            SequentialAgentOutcome {
+                agent_name: agent_name.to_string(),
+                succeeded: false,
+                heartbeats,
+                output: None,
+                error: Some(error.to_string()),
+            }
+        }
+    }
+}
+
+/// Send a runtime event to subscribers and append it to the bounded history.
+async fn record_event(
+    event_tx: &broadcast::Sender<RuntimeEventWithTimestamp>,
+    history: &Arc<RwLock<Vec<RuntimeEventWithTimestamp>>>,
+    event: RuntimeEvent,
+) {
+    let event_with_ts = RuntimeEventWithTimestamp {
+        event,
+        timestamp: std::time::SystemTime::now(),
+    };
+    let _ = event_tx.send(event_with_ts.clone());
+
+    let mut guard = history.write().await;
+    guard.push(event_with_ts);
+    if guard.len() > 100 {
+        guard.remove(0);
+    }
 }
 
 #[cfg(test)]
@@ -544,5 +839,224 @@ mod tests {
 
         let stopped = runtime.stop_all().await;
         assert!(stopped.is_ok());
+    }
+
+    struct SequentialRole {
+        name: String,
+        order_log: Arc<std::sync::Mutex<Vec<String>>>,
+        think_delay: Duration,
+        fail: bool,
+        output: Option<String>,
+    }
+
+    #[async_trait]
+    impl Role for SequentialRole {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn profile(&self) -> &str {
+            "sequential"
+        }
+
+        async fn observe(&self, _messages: &[Message]) -> Result<(), RoleError> {
+            if self.fail {
+                return Err(RoleError::ReasoningError);
+            }
+            Ok(())
+        }
+
+        async fn think(&self) -> Result<(), RoleError> {
+            if !self.think_delay.is_zero() {
+                sleep(self.think_delay).await;
+            }
+            Ok(())
+        }
+
+        async fn act(&self) -> Result<Option<Message>, RoleError> {
+            self.order_log
+                .lock()
+                .expect("order log poisoned")
+                .push(self.name.clone());
+            Ok(self
+                .output
+                .clone()
+                .map(|content| Message::new(self.name.clone(), content, None)))
+        }
+    }
+
+    fn sequential_registration(
+        name: &str,
+        order_log: &Arc<std::sync::Mutex<Vec<String>>>,
+        think_delay: Duration,
+        fail: bool,
+    ) -> AgentRegistration {
+        AgentRegistration {
+            name: name.to_string(),
+            role: Arc::new(SequentialRole {
+                name: name.to_string(),
+                order_log: Arc::clone(order_log),
+                think_delay,
+                fail,
+                output: Some(format!("{name} output")),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn sequential_workflow_runs_agents_in_registration_order() {
+        let environment = Arc::new(Environment::new(32));
+        let runtime = AgentRuntime::new(Arc::clone(&environment));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let pipeline = vec![
+            sequential_registration("alpha", &log, Duration::ZERO, false),
+            sequential_registration("beta", &log, Duration::ZERO, false),
+            sequential_registration("gamma", &log, Duration::ZERO, false),
+        ];
+
+        let report = runtime
+            .orchestrate_sequential(
+                pipeline,
+                Message::new("user".to_string(), "go".to_string(), None),
+                Duration::from_secs(5),
+            )
+            .await;
+
+        assert_eq!(report.order(), vec!["alpha", "beta", "gamma"]);
+        assert_eq!(report.completed(), 3);
+        assert_eq!(report.failed(), 0);
+        assert_eq!(
+            log.lock().expect("order log poisoned").clone(),
+            vec!["alpha", "beta", "gamma"]
+        );
+    }
+
+    #[tokio::test]
+    async fn sequential_workflow_isolates_agent_failure() {
+        let environment = Arc::new(Environment::new(32));
+        let runtime = AgentRuntime::new(Arc::clone(&environment));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let pipeline = vec![
+            sequential_registration("alpha", &log, Duration::ZERO, false),
+            sequential_registration("beta", &log, Duration::ZERO, true),
+            sequential_registration("gamma", &log, Duration::ZERO, false),
+        ];
+
+        let report = runtime
+            .orchestrate_sequential(
+                pipeline,
+                Message::new("user".to_string(), "go".to_string(), None),
+                Duration::from_secs(5),
+            )
+            .await;
+
+        assert_eq!(report.order(), vec!["alpha", "beta", "gamma"]);
+        assert_eq!(report.completed(), 2);
+        assert_eq!(report.failed(), 1);
+
+        let beta = report
+            .outcomes
+            .iter()
+            .find(|outcome| outcome.agent_name == "beta")
+            .expect("beta outcome present");
+        assert!(!beta.succeeded);
+        assert!(beta.error.is_some());
+
+        // The failing agent never reached act(); later agents still executed.
+        assert_eq!(
+            log.lock().expect("order log poisoned").clone(),
+            vec!["alpha", "gamma"]
+        );
+
+        let health = runtime.health_snapshot().await;
+        assert!(matches!(health.get("beta"), Some(AgentHealth::Failed)));
+        assert!(matches!(health.get("gamma"), Some(AgentHealth::Idle)));
+    }
+
+    #[tokio::test]
+    async fn sequential_workflow_emits_heartbeat_for_slow_agent() {
+        let environment = Arc::new(Environment::new(32));
+        let runtime = AgentRuntime::new(Arc::clone(&environment));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let pipeline = vec![sequential_registration(
+            "slowpoke",
+            &log,
+            Duration::from_millis(80),
+            false,
+        )];
+
+        let report = runtime
+            .orchestrate_sequential(
+                pipeline,
+                Message::new("user".to_string(), "go".to_string(), None),
+                Duration::from_millis(20),
+            )
+            .await;
+
+        let outcome = report.outcomes.first().expect("slowpoke outcome present");
+        assert!(outcome.succeeded);
+        assert!(
+            outcome.heartbeats >= 1,
+            "expected at least one heartbeat, got {}",
+            outcome.heartbeats
+        );
+
+        let events = runtime.events_snapshot().await;
+        let heartbeat_seen = events.iter().any(|entry| {
+            matches!(
+                &entry.event,
+                RuntimeEvent::MaestroHeartbeat { agent_name, .. } if agent_name == "slowpoke"
+            )
+        });
+        assert!(heartbeat_seen, "expected a MaestroHeartbeat event");
+    }
+
+    #[tokio::test]
+    async fn sequential_workflow_narrates_each_transition() {
+        let environment = Arc::new(Environment::new(32));
+        let runtime = AgentRuntime::new(Arc::clone(&environment));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let pipeline = vec![
+            sequential_registration("alpha", &log, Duration::ZERO, false),
+            sequential_registration("beta", &log, Duration::ZERO, false),
+        ];
+
+        let _report = runtime
+            .orchestrate_sequential(
+                pipeline,
+                Message::new("user".to_string(), "go".to_string(), None),
+                Duration::from_secs(5),
+            )
+            .await;
+
+        let events = runtime.events_snapshot().await;
+        let phases: Vec<String> = events
+            .iter()
+            .filter_map(|entry| match &entry.event {
+                RuntimeEvent::MaestroNarration { phase, .. } => Some(phase.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert!(phases.contains(&"workflow-start".to_string()));
+        assert_eq!(
+            phases
+                .iter()
+                .filter(|phase| phase.as_str() == "agent-start")
+                .count(),
+            2
+        );
+        assert_eq!(
+            phases
+                .iter()
+                .filter(|phase| phase.as_str() == "agent-complete")
+                .count(),
+            2
+        );
+        assert!(phases.contains(&"workflow-complete".to_string()));
     }
 }
