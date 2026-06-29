@@ -164,6 +164,23 @@ pub fn registrations_from_default_personas(
     Ok(registrations)
 }
 
+/// Build runtime registrations from the governed persona catalog, resolving
+/// Core Mode edits into the live agent set. Falls back to in-code defaults when
+/// governance is empty or invalid (handled inside `PersonaCatalog::from_governance`).
+pub fn registrations_from_governance(
+    llm_provider: Arc<dyn LlmProvider>,
+    governance: &crate::application::markdown_governance::MarkdownGovernance,
+) -> Vec<AgentRegistration> {
+    PersonaCatalog::from_governance(governance)
+        .personas
+        .into_iter()
+        .map(|persona| AgentRegistration {
+            name: persona.name.clone(),
+            role: Arc::new(PersonaRuntimeRole::new(persona, Arc::clone(&llm_provider))),
+        })
+        .collect::<Vec<_>>()
+}
+
 pub fn registrations_from_selected_personas(
     llm_provider: Arc<dyn LlmProvider>,
     selected_names: &[&str],

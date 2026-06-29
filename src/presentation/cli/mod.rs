@@ -12,7 +12,8 @@ use crate::application::environment::Environment;
 use crate::application::markdown_governance::MarkdownGovernance;
 use crate::application::persona::PersonaCatalog;
 use crate::application::persona_operations::{
-    registrations_from_default_personas, registrations_from_selected_personas,
+    registrations_from_default_personas, registrations_from_governance,
+    registrations_from_selected_personas,
 };
 use crate::application::project_deps::{
     ProjectDependencyCheck, ProjectDepsCheckReport, ProjectDepsConfig,
@@ -558,15 +559,10 @@ async fn run_tui_with_runtime(
                     }
 
                     let rt = Arc::new(AgentRuntime::new(Arc::clone(&environment)));
-                    let registrations = if matches!(bootstrap, OnboardingBootstrap::InitInterview) {
-                        registrations_from_selected_personas(resolved.provider, &["Maestro"])
-                    } else {
-                        registrations_from_default_personas(resolved.provider)
-                    };
-
-                    match registrations {
-                        Ok(registrations) => {
-                            if matches!(bootstrap, OnboardingBootstrap::InitInterview) {
+                    if matches!(bootstrap, OnboardingBootstrap::InitInterview) {
+                        match registrations_from_selected_personas(resolved.provider, &["Maestro"])
+                        {
+                            Ok(registrations) => {
                                 if let Err(error) = rt.start_agents(registrations).await {
                                     let _ = environment
                                         .publish(crate::domain::models::message::Message::new(
@@ -578,23 +574,27 @@ async fn run_tui_with_runtime(
                                 } else {
                                     runtime = Some(rt);
                                 }
-                            } else {
-                                // Workspace monitor: the Maestro agent orchestrates the
-                                // available agents sequentially per user prompt instead of
-                                // running them as parallel broadcast agents.
-                                rt.set_sequential_pipeline(registrations).await;
-                                runtime = Some(rt);
+                            }
+                            Err(error) => {
+                                let _ = environment
+                                    .publish(crate::domain::models::message::Message::new(
+                                        "system".to_string(),
+                                        format!("⚠️ Invalid default personas: {error}"),
+                                        None,
+                                    ))
+                                    .await;
                             }
                         }
-                        Err(error) => {
-                            let _ = environment
-                                .publish(crate::domain::models::message::Message::new(
-                                    "system".to_string(),
-                                    format!("⚠️ Invalid default personas: {error}"),
-                                    None,
-                                ))
-                                .await;
-                        }
+                    } else {
+                        // Workspace monitor: resolve the governed persona catalog so Core
+                        // Mode edits drive the live agent set, then orchestrate the agents
+                        // sequentially per user prompt instead of parallel broadcast.
+                        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                        let governance = MarkdownGovernance::new(root);
+                        let registrations =
+                            registrations_from_governance(resolved.provider, &governance);
+                        rt.set_sequential_pipeline(registrations).await;
+                        runtime = Some(rt);
                     }
                 }
                 Err(error) => {
@@ -697,32 +697,14 @@ fn scaffold_scope(governance: &MarkdownGovernance) -> Result<()> {
 }
 
 fn scaffold_personas(governance: &MarkdownGovernance) -> Result<()> {
-    let personas = [
-        (
-            "maestro",
-            "## Responsibility\nRule and orchestrate software-house directives\n\n## Deliverables\nGoverned persona, skill, and scope directives\n\n## Instructions\nOptimize prompts, enforce architecture boundaries, and coordinate launch strategy\n\n## Interaction Matrix\nMaestro -> Project Manager / Quality Assurance / User Experience / Software Engineer\n\n## Boundaries\nImmutable: this persona cannot be edited or archived\n",
-        ),
-        (
-            "project-manager",
-            "## Responsibility\nOwn milestone sequencing and delivery prioritization\n\n## Deliverables\nPrioritized backlog and acceptance-ready milestones\n\n## Instructions\nCoordinate scope with QA and Software Engineer while protecting user value\n\n## Interaction Matrix\nProject Manager -> Maestro / User Experience / Software Engineer\n\n## Boundaries\nDo not override Maestro governance decisions\n",
-        ),
-        (
-            "quality-assurance",
-            "## Responsibility\nDefine and enforce quality validation strategy\n\n## Deliverables\nRisk-based test plans and go/no-go quality reports\n\n## Instructions\nAutomate critical regressions and require evidence for release readiness\n\n## Interaction Matrix\nQuality Assurance -> Maestro / Project Manager / Software Engineer\n\n## Boundaries\nDo not approve releases without measurable acceptance evidence\n",
-        ),
-        (
-            "user-experience",
-            "## Responsibility\nDesign and validate user journeys for clarity and usability\n\n## Deliverables\nInteraction specifications and friction mitigation proposals\n\n## Instructions\nAlign usability outcomes with milestone priorities\n\n## Interaction Matrix\nUser Experience -> Maestro / Project Manager / Software Engineer\n\n## Boundaries\nDo not alter scope priorities without Project Manager alignment\n",
-        ),
-        (
-            "software-engineer",
-            "## Responsibility\nImplement architecture safely with language-agnostic engineering practices\n\n## Deliverables\nWorking increments, tests, and technical runbooks\n\n## Instructions\nApply clean architecture, test-first discipline, and explicit observability\n\n## Interaction Matrix\nSoftware Engineer -> Maestro / Project Manager / Quality Assurance\n\n## Boundaries\nDo not bypass quality gates or architecture constraints\n",
-        ),
-    ];
-    for (persona, content) in personas {
-        let file = governance.personas_dir().join(format!("{persona}.md"));
+    // Emit the canonical persona schema directly from the runtime catalog so the
+    // scaffolded files, the Core Mode editor, and the live agents share one source
+    // of truth.
+    for persona in PersonaCatalog::default_personas().personas {
+        let slug = persona.name.to_lowercase().replace(' ', "-");
+        let file = governance.personas_dir().join(format!("{slug}.md"));
         if !file.exists() {
-            fs::write(file, content)?;
+            fs::write(file, persona.to_markdown())?;
         }
     }
     Ok(())

@@ -158,7 +158,13 @@ impl MarkdownGovernance {
             "persona",
             content,
             &[
-                &["responsibility", "responsibilities", "responsabilidade"],
+                &["purpose", "objective", "proposito", "propósito", "objetivo"],
+                &[
+                    "responsibilities",
+                    "responsibility",
+                    "responsabilidades",
+                    "responsabilidade",
+                ],
                 &["deliverables", "outputs", "entregaveis", "entregáveis"],
                 &[
                     "operational instructions",
@@ -172,14 +178,19 @@ impl MarkdownGovernance {
                     "matriz de interacao",
                     "matriz de interação",
                 ],
-                &["boundaries", "limits", "limites"],
+                &[
+                    "quality criteria",
+                    "criterios de qualidade",
+                    "critérios de qualidade",
+                ],
             ],
             &[
-                "responsibility",
+                "purpose",
+                "responsibilities",
                 "deliverables",
                 "operational instructions",
                 "interaction matrix",
-                "boundaries",
+                "quality criteria",
             ],
         )?;
 
@@ -440,7 +451,7 @@ mod tests {
     }
 
     fn persona_content() -> &'static str {
-        "## Responsibility\ntext\n## Deliverables\ntext\n## Operational Instructions\ntext\n## Interaction Matrix\ntext\n## Boundaries\ntext"
+        "# Persona\n## Purpose\ntext\n## Responsibilities\ntext\n## Deliverables\ntext\n## Operational Instructions\ntext\n## Interaction Matrix\ntext\n## Quality Criteria\ntext"
     }
 
     fn skill_content() -> &'static str {
@@ -544,7 +555,7 @@ mod tests {
         let root = unique_root();
         let governance = MarkdownGovernance::new(&root);
         let content =
-            "## Responsibility\ntext\n## Deliverables\ntext\n## Operational Instructions\ntext\n## Boundaries\ntext";
+            "## Purpose\ntext\n## Responsibilities\ntext\n## Deliverables\ntext\n## Operational Instructions\ntext\n## Quality Criteria\ntext";
 
         let res = governance.validate_persona_document("produto.md", content);
 
@@ -620,7 +631,7 @@ mod tests {
         let root = unique_root();
         let governance = MarkdownGovernance::new(&root);
 
-        let content = "## Responsabilidade\ntexto\n## Entregaveis\ntexto\n## Instrucoes\ntexto\n## Matriz de Interacao\ntexto\n## Limites\ntexto";
+        let content = "## Proposito\ntexto\n## Responsabilidade\ntexto\n## Entregaveis\ntexto\n## Instrucoes\ntexto\n## Matriz de Interacao\ntexto\n## Criterios de Qualidade\ntexto";
         let res = governance.validate_persona_document("produto.md", content);
 
         assert!(res.is_ok());
@@ -694,7 +705,7 @@ mod tests {
 
         let read = governance.read_document(&path);
         assert!(read.is_ok());
-        assert!(read.unwrap_or_default().contains("## Responsibility"));
+        assert!(read.unwrap_or_default().contains("## Responsibilities"));
 
         let _ = fs::remove_dir_all(root);
     }

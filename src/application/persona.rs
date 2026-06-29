@@ -42,6 +42,34 @@ pub enum PersonaError {
     DuplicateInteraction { persona: String, target: String },
 }
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum PersonaParseError {
+    #[error("Persona markdown is missing a '# <Name>' title")]
+    MissingTitle,
+    #[error("Persona markdown is missing required section: {section}")]
+    MissingSection { section: String },
+    #[error("Persona markdown section is empty: {section}")]
+    EmptySection { section: String },
+    #[error("Malformed interaction entry (expected 'Target | Contract | Handoff'): {entry}")]
+    MalformedInteraction { entry: String },
+}
+
+#[derive(Debug, Error)]
+pub enum PersonaCatalogLoadError {
+    #[error("No persona markdown files found in governance directory")]
+    Empty,
+    #[error("Failed to read persona governance: {0}")]
+    Governance(#[from] crate::application::markdown_governance::MarkdownGovernanceError),
+    #[error("Failed to parse persona markdown ({file}): {source}")]
+    Parse {
+        file: String,
+        #[source]
+        source: PersonaParseError,
+    },
+    #[error("Persona catalog validation failed: {0}")]
+    Validation(#[from] PersonaError),
+}
+
 impl Persona {
     pub fn validate(&self, known_personas: &HashSet<String>) -> Result<(), PersonaError> {
         validate_non_empty(&self.name, &self.name, "identity")?;
@@ -103,6 +131,133 @@ impl Persona {
 
         Ok(())
     }
+
+    /// Render this persona as canonical governance markdown.
+    ///
+    /// The schema is the single source of truth shared by the runtime catalog,
+    /// the Core Mode editor, and `maestro scaffold-markdown`.
+    pub fn to_markdown(&self) -> String {
+        let bullet_block = |items: &[String]| -> String {
+            items
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let interactions = self
+            .interaction_matrix
+            .iter()
+            .map(|interaction| {
+                format!(
+                    "- {} | {} | {}",
+                    interaction.target_persona,
+                    interaction.collaboration_contract,
+                    interaction.expected_handoff
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            "# {name}\n\n## Purpose\n{purpose}\n\n## Responsibilities\n{responsibilities}\n\n## Deliverables\n{deliverables}\n\n## Operational Instructions\n{instructions}\n\n## Interaction Matrix\n{interactions}\n\n## Quality Criteria\n{quality}\n",
+            name = self.name,
+            purpose = self.purpose,
+            responsibilities = bullet_block(&self.responsibilities),
+            deliverables = bullet_block(&self.deliverables),
+            instructions = bullet_block(&self.operational_instructions),
+            interactions = interactions,
+            quality = bullet_block(&self.quality_criteria),
+        )
+    }
+
+    /// Parse a persona from canonical governance markdown.
+    ///
+    /// Performs structural parsing only; cross-persona interaction targets are
+    /// validated by [`PersonaCatalog::validate`]. Returns a typed error on
+    /// malformed input so callers never panic on hand-edited files.
+    pub fn from_markdown(content: &str) -> Result<Self, PersonaParseError> {
+        let mut name: Option<String> = None;
+        let mut current_section: Option<String> = None;
+        let mut sections: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+
+        for raw_line in content.lines() {
+            let line = raw_line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some(heading) = line.strip_prefix("## ") {
+                let key = heading.trim().to_lowercase();
+                current_section = Some(key.clone());
+                sections.entry(key).or_default();
+                continue;
+            }
+
+            if let Some(title) = line.strip_prefix("# ") {
+                if name.is_none() {
+                    name = Some(title.trim().to_string());
+                }
+                continue;
+            }
+
+            if let Some(section) = &current_section {
+                let value = line.strip_prefix("- ").unwrap_or(line).trim().to_string();
+                if !value.is_empty() {
+                    sections.entry(section.clone()).or_default().push(value);
+                }
+            }
+        }
+
+        let name = name.ok_or(PersonaParseError::MissingTitle)?;
+
+        let take = |section: &str| -> Result<Vec<String>, PersonaParseError> {
+            match sections.get(section) {
+                Some(values) if !values.is_empty() => Ok(values.clone()),
+                Some(_) => Err(PersonaParseError::EmptySection {
+                    section: section.to_string(),
+                }),
+                None => Err(PersonaParseError::MissingSection {
+                    section: section.to_string(),
+                }),
+            }
+        };
+
+        let purpose = take("purpose")?
+            .first()
+            .cloned()
+            .ok_or(PersonaParseError::EmptySection {
+                section: "purpose".to_string(),
+            })?;
+        let responsibilities = take("responsibilities")?;
+        let deliverables = take("deliverables")?;
+        let operational_instructions = take("operational instructions")?;
+        let quality_criteria = take("quality criteria")?;
+
+        let mut interaction_matrix = Vec::new();
+        for entry in take("interaction matrix")? {
+            let parts: Vec<&str> = entry.split('|').map(|part| part.trim()).collect();
+            if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
+                return Err(PersonaParseError::MalformedInteraction { entry });
+            }
+            interaction_matrix.push(PersonaInteraction {
+                target_persona: parts[0].to_string(),
+                collaboration_contract: parts[1].to_string(),
+                expected_handoff: parts[2].to_string(),
+            });
+        }
+
+        Ok(Self {
+            name,
+            purpose,
+            responsibilities,
+            deliverables,
+            operational_instructions,
+            interaction_matrix,
+            quality_criteria,
+        })
+    }
 }
 
 impl PersonaCatalog {
@@ -138,6 +293,61 @@ impl PersonaCatalog {
                 software_engineer_persona(),
             ],
         }
+    }
+
+    /// Resolve the runtime persona catalog from governed markdown, falling back
+    /// to the in-code defaults when governance is empty, missing, or invalid.
+    ///
+    /// This is the single resolution point that makes Core Mode persona edits
+    /// drive the runtime agent set while never panicking on a malformed file.
+    pub fn from_governance(
+        governance: &crate::application::markdown_governance::MarkdownGovernance,
+    ) -> Self {
+        match Self::try_from_governance(governance) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "falling back to in-code default personas; governed catalog unavailable"
+                );
+                Self::default_personas()
+            }
+        }
+    }
+
+    /// Build and validate the catalog strictly from governed markdown.
+    ///
+    /// The immutable Maestro orchestrator is always overridden with its trusted
+    /// in-code definition so on-disk edits cannot weaken its governance role.
+    pub fn try_from_governance(
+        governance: &crate::application::markdown_governance::MarkdownGovernance,
+    ) -> Result<Self, PersonaCatalogLoadError> {
+        let file_names = governance.list_personas()?;
+        if file_names.is_empty() {
+            return Err(PersonaCatalogLoadError::Empty);
+        }
+
+        let mut personas = Vec::with_capacity(file_names.len());
+        for file_name in file_names {
+            let path = governance.personas_dir().join(&file_name);
+            let content = governance.read_document(&path)?;
+            let persona = Persona::from_markdown(&content).map_err(|source| {
+                PersonaCatalogLoadError::Parse {
+                    file: file_name,
+                    source,
+                }
+            })?;
+            personas.push(persona);
+        }
+
+        // Guarantee the immutable Maestro orchestrator is present and trusted.
+        let maestro = maestro_persona();
+        personas.retain(|persona| persona.name != maestro.name);
+        personas.insert(0, maestro);
+
+        let catalog = Self { personas };
+        catalog.validate()?;
+        Ok(catalog)
     }
 }
 
@@ -402,6 +612,149 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(catalog.personas.len(), 5);
+    }
+
+    #[test]
+    fn persona_markdown_round_trips_for_every_default_persona() {
+        for persona in PersonaCatalog::default_personas().personas {
+            let markdown = persona.to_markdown();
+            let parsed = Persona::from_markdown(&markdown)
+                .expect("canonical persona markdown must parse back into a persona");
+            assert_eq!(parsed, persona);
+        }
+    }
+
+    #[test]
+    fn from_markdown_parses_structured_interaction_matrix() {
+        let markdown = "# Project Manager\n\n## Purpose\nCoordinate delivery\n\n## Responsibilities\n- Sequence milestones\n\n## Deliverables\n- Backlog\n\n## Operational Instructions\n- Keep scope small\n\n## Interaction Matrix\n- Maestro | Report status | Risk notes\n\n## Quality Criteria\n- Measurable acceptance\n";
+
+        let persona = Persona::from_markdown(markdown).expect("valid markdown parses");
+
+        assert_eq!(persona.name, "Project Manager");
+        assert_eq!(persona.purpose, "Coordinate delivery");
+        assert_eq!(persona.interaction_matrix.len(), 1);
+        assert_eq!(persona.interaction_matrix[0].target_persona, "Maestro");
+        assert_eq!(
+            persona.interaction_matrix[0].collaboration_contract,
+            "Report status"
+        );
+        assert_eq!(persona.interaction_matrix[0].expected_handoff, "Risk notes");
+    }
+
+    #[test]
+    fn from_markdown_rejects_missing_title() {
+        let markdown = "## Purpose\nNo title here\n";
+
+        let result = Persona::from_markdown(markdown);
+
+        assert_eq!(result, Err(PersonaParseError::MissingTitle));
+    }
+
+    #[test]
+    fn from_markdown_rejects_missing_section() {
+        let markdown = "# Solo\n\n## Purpose\nExists\n";
+
+        let result = Persona::from_markdown(markdown);
+
+        assert_eq!(
+            result,
+            Err(PersonaParseError::MissingSection {
+                section: "responsibilities".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn from_markdown_rejects_malformed_interaction() {
+        let markdown = "# Solo\n\n## Purpose\nExists\n\n## Responsibilities\n- Do work\n\n## Deliverables\n- Output\n\n## Operational Instructions\n- Be precise\n\n## Interaction Matrix\n- Maestro only two parts\n\n## Quality Criteria\n- Traceable\n";
+
+        let result = Persona::from_markdown(markdown);
+
+        assert_eq!(
+            result,
+            Err(PersonaParseError::MalformedInteraction {
+                entry: "Maestro only two parts".to_string(),
+            })
+        );
+    }
+
+    fn temp_governance_with_workers() -> (
+        std::path::PathBuf,
+        crate::application::markdown_governance::MarkdownGovernance,
+    ) {
+        use crate::application::markdown_governance::MarkdownGovernance;
+        let root = std::env::temp_dir().join(format!("maestro-persona-{}", uuid::Uuid::new_v4()));
+        let governance = MarkdownGovernance::new(&root);
+        governance
+            .ensure_directories()
+            .expect("ensure governance directories");
+        for persona in [
+            project_manager_persona(),
+            quality_assurance_persona(),
+            user_experience_persona(),
+            software_engineer_persona(),
+        ] {
+            let file = governance.personas_dir().join(format!(
+                "{}.md",
+                persona.name.to_lowercase().replace(' ', "-")
+            ));
+            std::fs::write(file, persona.to_markdown()).expect("write worker persona");
+        }
+        (root, governance)
+    }
+
+    #[test]
+    fn from_governance_loads_workers_and_injects_immutable_maestro() {
+        let (root, governance) = temp_governance_with_workers();
+
+        let catalog = PersonaCatalog::from_governance(&governance);
+
+        assert!(catalog.validate().is_ok());
+        assert_eq!(catalog.personas.len(), 5);
+        assert_eq!(catalog.personas[0].name, "Maestro");
+        assert_eq!(catalog.personas[0], maestro_persona());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn from_governance_falls_back_to_defaults_when_empty() {
+        use crate::application::markdown_governance::MarkdownGovernance;
+        let root = std::env::temp_dir().join(format!("maestro-persona-{}", uuid::Uuid::new_v4()));
+        let governance = MarkdownGovernance::new(&root);
+        governance
+            .ensure_directories()
+            .expect("ensure governance directories");
+
+        let catalog = PersonaCatalog::from_governance(&governance);
+
+        assert_eq!(catalog, PersonaCatalog::default_personas());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn from_governance_overrides_on_disk_maestro_tampering() {
+        let (root, governance) = temp_governance_with_workers();
+        let mut tampered = maestro_persona();
+        tampered.purpose = "Tampered weakened purpose".to_string();
+        std::fs::write(
+            governance.personas_dir().join("maestro.md"),
+            tampered.to_markdown(),
+        )
+        .expect("write tampered maestro");
+
+        let catalog = PersonaCatalog::from_governance(&governance);
+
+        let maestro = catalog
+            .personas
+            .iter()
+            .find(|persona| persona.name == "Maestro")
+            .expect("Maestro present");
+        assert_eq!(*maestro, maestro_persona());
+        assert_ne!(maestro.purpose, "Tampered weakened purpose");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
