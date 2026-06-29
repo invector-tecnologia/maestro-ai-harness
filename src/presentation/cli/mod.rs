@@ -566,15 +566,23 @@ async fn run_tui_with_runtime(
 
                     match registrations {
                         Ok(registrations) => {
-                            if let Err(error) = rt.start_agents(registrations).await {
-                                let _ = environment
-                                    .publish(crate::domain::models::message::Message::new(
-                                        "system".to_string(),
-                                        format!("⚠️ Failed to start runtime personas: {error}"),
-                                        None,
-                                    ))
-                                    .await;
+                            if matches!(bootstrap, OnboardingBootstrap::InitInterview) {
+                                if let Err(error) = rt.start_agents(registrations).await {
+                                    let _ = environment
+                                        .publish(crate::domain::models::message::Message::new(
+                                            "system".to_string(),
+                                            format!("⚠️ Failed to start runtime personas: {error}"),
+                                            None,
+                                        ))
+                                        .await;
+                                } else {
+                                    runtime = Some(rt);
+                                }
                             } else {
+                                // Workspace monitor: the Maestro agent orchestrates the
+                                // available agents sequentially per user prompt instead of
+                                // running them as parallel broadcast agents.
+                                rt.set_sequential_pipeline(registrations).await;
                                 runtime = Some(rt);
                             }
                         }

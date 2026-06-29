@@ -1253,7 +1253,24 @@ pub async fn run_tui(
                             Some(UserAction::SubmitCommand(command)) => {
                                 let message = Message::new("user".to_string(), command.clone(), None);
                                 app.logs.push(format!("you: {}", command));
-                                if let Some(env) = &environment {
+                                let use_sequential = if let Some(rt) = &runtime {
+                                    rt.has_sequential_pipeline().await
+                                } else {
+                                    false
+                                };
+                                if use_sequential {
+                                    if let Some(rt) = &runtime {
+                                        let rt_clone = Arc::clone(rt);
+                                        tokio::spawn(async move {
+                                            let _ = rt_clone
+                                                .orchestrate_user_message(
+                                                    message,
+                                                    std::time::Duration::from_secs(5),
+                                                )
+                                                .await;
+                                        });
+                                    }
+                                } else if let Some(env) = &environment {
                                     let _ = env.publish(message).await;
                                 } else {
                                     app.logs.push(

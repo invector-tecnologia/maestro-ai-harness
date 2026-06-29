@@ -22,6 +22,7 @@ pub enum AgentHealth {
     Stopped,
 }
 
+#[derive(Clone)]
 pub struct AgentRegistration {
     pub name: String,
     pub role: Arc<dyn Role>,
@@ -84,6 +85,8 @@ pub struct AgentRuntime {
     health: Arc<RwLock<HashMap<String, AgentHealth>>>,
     event_tx: broadcast::Sender<RuntimeEventWithTimestamp>,
     event_history: Arc<RwLock<Vec<RuntimeEventWithTimestamp>>>,
+    sequential_pipeline: RwLock<Vec<AgentRegistration>>,
+    orchestration_lock: Mutex<()>,
 }
 
 impl AgentRuntime {
@@ -96,6 +99,8 @@ impl AgentRuntime {
             health: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             event_history: Arc::new(RwLock::new(Vec::new())),
+            sequential_pipeline: RwLock::new(Vec::new()),
+            orchestration_lock: Mutex::new(()),
         }
     }
 
@@ -317,6 +322,36 @@ impl AgentRuntime {
         .await;
 
         report
+    }
+
+    /// Register a sequential pipeline for the interactive Workspace monitor.
+    /// Seeds each agent's health to `Idle` so the Agent Activity panel lists
+    /// them before the first prompt is orchestrated.
+    pub async fn set_sequential_pipeline(&self, pipeline: Vec<AgentRegistration>) {
+        for registration in &pipeline {
+            set_health(&self.health, &registration.name, AgentHealth::Idle).await;
+        }
+        let mut guard = self.sequential_pipeline.write().await;
+        *guard = pipeline;
+    }
+
+    /// Whether a sequential pipeline has been registered.
+    pub async fn has_sequential_pipeline(&self) -> bool {
+        !self.sequential_pipeline.read().await.is_empty()
+    }
+
+    /// Orchestrate the stored sequential pipeline for a single user prompt.
+    /// Single-flight: concurrent invocations are serialized so role state is
+    /// never shared across interleaved workflows.
+    pub async fn orchestrate_user_message(
+        &self,
+        trigger: Message,
+        heartbeat_period: std::time::Duration,
+    ) -> SequentialRunReport {
+        let _guard = self.orchestration_lock.lock().await;
+        let pipeline = self.sequential_pipeline.read().await.clone();
+        self.orchestrate_sequential(pipeline, trigger, heartbeat_period)
+            .await
     }
 }
 
@@ -1058,5 +1093,146 @@ mod tests {
             2
         );
         assert!(phases.contains(&"workflow-complete".to_string()));
+    }
+
+    #[tokio::test]
+    async fn set_sequential_pipeline_seeds_idle_health_and_reports_presence() {
+        let environment = Arc::new(Environment::new(32));
+        let runtime = AgentRuntime::new(Arc::clone(&environment));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        assert!(!runtime.has_sequential_pipeline().await);
+
+        runtime
+            .set_sequential_pipeline(vec![
+                sequential_registration("alpha", &log, Duration::ZERO, false),
+                sequential_registration("beta", &log, Duration::ZERO, false),
+            ])
+            .await;
+
+        assert!(runtime.has_sequential_pipeline().await);
+        let health = runtime.health_snapshot().await;
+        assert!(matches!(health.get("alpha"), Some(AgentHealth::Idle)));
+        assert!(matches!(health.get("beta"), Some(AgentHealth::Idle)));
+    }
+
+    #[tokio::test]
+    async fn orchestrate_user_message_runs_stored_pipeline() {
+        let environment = Arc::new(Environment::new(32));
+        let runtime = AgentRuntime::new(Arc::clone(&environment));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        runtime
+            .set_sequential_pipeline(vec![
+                sequential_registration("alpha", &log, Duration::ZERO, false),
+                sequential_registration("beta", &log, Duration::ZERO, false),
+            ])
+            .await;
+
+        let report = runtime
+            .orchestrate_user_message(
+                Message::new("user".to_string(), "go".to_string(), None),
+                Duration::from_secs(5),
+            )
+            .await;
+
+        assert_eq!(report.order(), vec!["alpha", "beta"]);
+        assert_eq!(report.completed(), 2);
+        assert_eq!(
+            log.lock().expect("order log poisoned").clone(),
+            vec!["alpha", "beta"]
+        );
+    }
+
+    struct ConcurrencyRole {
+        name: String,
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Role for ConcurrencyRole {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn profile(&self) -> &str {
+            "concurrency"
+        }
+
+        async fn observe(&self, _messages: &[Message]) -> Result<(), RoleError> {
+            let current = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active.fetch_max(current, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn think(&self) -> Result<(), RoleError> {
+            sleep(Duration::from_millis(20)).await;
+            Ok(())
+        }
+
+        async fn act(&self) -> Result<Option<Message>, RoleError> {
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(None)
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrate_user_message_is_single_flight() {
+        let environment = Arc::new(Environment::new(32));
+        let runtime = Arc::new(AgentRuntime::new(Arc::clone(&environment)));
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+
+        runtime
+            .set_sequential_pipeline(vec![
+                AgentRegistration {
+                    name: "alpha".to_string(),
+                    role: Arc::new(ConcurrencyRole {
+                        name: "alpha".to_string(),
+                        active: Arc::clone(&active),
+                        max_active: Arc::clone(&max_active),
+                    }),
+                },
+                AgentRegistration {
+                    name: "beta".to_string(),
+                    role: Arc::new(ConcurrencyRole {
+                        name: "beta".to_string(),
+                        active: Arc::clone(&active),
+                        max_active: Arc::clone(&max_active),
+                    }),
+                },
+            ])
+            .await;
+
+        let first = Arc::clone(&runtime);
+        let second = Arc::clone(&runtime);
+        let run_one = tokio::spawn(async move {
+            first
+                .orchestrate_user_message(
+                    Message::new("user".to_string(), "one".to_string(), None),
+                    Duration::from_secs(5),
+                )
+                .await
+        });
+        let run_two = tokio::spawn(async move {
+            second
+                .orchestrate_user_message(
+                    Message::new("user".to_string(), "two".to_string(), None),
+                    Duration::from_secs(5),
+                )
+                .await
+        });
+
+        let report_one = run_one.await.expect("first orchestration joined");
+        let report_two = run_two.await.expect("second orchestration joined");
+
+        assert_eq!(report_one.completed(), 2);
+        assert_eq!(report_two.completed(), 2);
+        assert_eq!(
+            max_active.load(Ordering::SeqCst),
+            1,
+            "single-flight orchestration must never run two cycles at once"
+        );
     }
 }

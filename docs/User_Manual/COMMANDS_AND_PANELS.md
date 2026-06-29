@@ -21,7 +21,7 @@
 
 ## Modes
 Maestro has two intent-driven modes; there is no default landing mode.
-- **Workspace Mode** is a lean runtime monitor. The Maestro agent orchestrates available agents sequentially (each agent starts only after the previous finishes), narrating each transition in real time and emitting a heartbeat at least every 5 seconds while an agent runs longer than 5 seconds. Per-agent failure isolation is preserved.
+- **Workspace Mode** is a lean runtime monitor. Submitting a prompt makes the Maestro agent orchestrate the available agents sequentially (each agent starts only after the previous finishes), narrating each transition in real time and emitting a heartbeat at least every 5 seconds while an agent runs longer than 5 seconds. Concurrent prompts are serialized (single-flight), and per-agent failure isolation is preserved.
 - **Interview Mode** is the single directive governance home. It opens on a select stage (the directives picker, grouped by type with the Maestro persona shown read-only), then advances to an author stage that guides Create / Edit / Update / Delete of personas, persona skills, and project scopes. The Project Manager agent writes scope files first; Maestro then reads the written scope and derives the additions each non-Maestro persona needs. The Maestro persona is immutable and can never be a directive target.
 
 ## Workspace Mode Panels
