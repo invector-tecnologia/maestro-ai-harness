@@ -9,4 +9,5 @@ pub mod persona;
 pub mod persona_operations;
 pub mod project_deps;
 pub mod rag;
+pub mod rag_cognitive;
 pub mod readiness;

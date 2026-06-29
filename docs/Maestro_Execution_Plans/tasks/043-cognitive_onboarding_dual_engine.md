@@ -170,6 +170,25 @@ _To be filled at completion of each increment with executed commands and outcome
   `maestro_panel_shows_guided_setup_engine_when_model_offline`.
 * `scripts/check-doc-links.sh` — link integrity passed.
 
+### PR5 — RAG cognitive agent wrapper (AC7)
+* Added `RagCognitiveAgent` in `src/application/rag_cognitive.rs` (registered in
+  `src/application/mod.rs`): a non-breaking wrapper holding `Arc<RagService>` that
+  narrates retrieval as the shared cognitive cycle — emitting `AgentObserving →
+  AgentThinking → AgentActing → AgentActed` (and `ExecutionError` on failure) through
+  the existing `RuntimeObserver` channel — while delegating retrieval unchanged to the
+  inner service. Observer is optional; constructors `new`, `with_observer`,
+  `with_agent_name`.
+* Architecture compliance: pure application-layer orchestration over the existing
+  `RagService`; no retrieval logic, ranking, or scoring changed (lexical fallback and
+  citations preserved by delegation).
+* `cargo fmt --all` — clean.
+* `cargo clippy --all-targets -- -D warnings` — no warnings.
+* `cargo test --all-targets` — 181 passed; 0 failed. New tests:
+  `narrates_cognitive_cycle_and_preserves_service_answer` (regression guard: wrapped
+  answer == direct service answer, asserts event ordering),
+  `query_without_observer_returns_answer`.
+* `scripts/check-doc-links.sh` — link integrity passed.
+
 ## 6. RESIDUAL RISKS
 * Gemini model enumeration is awkward against a `generateContent` endpoint; PR1 verifies
   access-token acquisition (auth) rather than a full catalog listing and documents the
