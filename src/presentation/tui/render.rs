@@ -506,15 +506,30 @@ fn render_maestro_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app:
     let mut lines = vec![];
 
     if let Some(session_lock) = &app.interview_session {
-        let turn = session_lock
+        let (turn, engine, maestro_online) = session_lock
             .try_read()
             .ok()
-            .map(|session| session.turn_count)
-            .unwrap_or(0);
+            .map(|session| (session.turn_count, session.engine, session.maestro_online))
+            .unwrap_or((
+                0,
+                crate::application::interview_bot::InterviewEngine::GuidedSetup,
+                false,
+            ));
         lines.push("🤖 Maestro Interview".to_string());
+        lines.push(format!(
+            "  Engine: {} ({})",
+            engine.label(),
+            if maestro_online {
+                "model online"
+            } else {
+                "model offline"
+            }
+        ));
         lines.push(format!("  Turn: {}/10", turn));
         if app.approval_modal_visible {
             lines.push("  🔔 Awaiting your decision...".to_string());
+        } else if maestro_online {
+            lines.push("  🧠 Thinking with Maestro...".to_string());
         } else {
             lines.push("  🎧 Listening...".to_string());
         }

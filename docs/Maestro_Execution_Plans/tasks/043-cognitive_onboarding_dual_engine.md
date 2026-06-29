@@ -149,6 +149,27 @@ _To be filled at completion of each increment with executed commands and outcome
   `reassess_engine_auto_promotes_when_model_becomes_available`.
 * `scripts/check-doc-links.sh` — link integrity passed.
 
+### PR4 — TUI engine wiring + double-voice suppression (AC4, AC5)
+* SENSE stage in `run_tui` (`src/presentation/tui/mod.rs`) now probes the configured
+  provider (`probe_default_provider`) before the interview, selects the engine via
+  `InterviewEngine::from_provider_status`, records it on the session, logs the chosen
+  engine + model online/offline, and surfaces `guided_setup_actions` steps when offline
+  (Option A).
+* Added `engine: InterviewEngine` and `maestro_online: bool` to `InterviewSession`
+  (Default impl updated; `InterviewEngine` now derives `Default` = `GuidedSetup`).
+* `enqueue_interview_question` (`src/presentation/tui/interview.rs`) suppresses the
+  scripted Maestro bus publish when `maestro_online` (Option B), leaving the live
+  Maestro role as the single voice in shared history — removing the dual-voice
+  double-post.
+* `render_maestro_panel` (`src/presentation/tui/render.rs`) status line now shows the
+  engine label and model online/offline state (Thinking vs Listening).
+* `cargo fmt --all` — clean.
+* `cargo clippy --all-targets -- -D warnings` — no warnings.
+* `cargo test --all-targets` — 179 passed; 0 failed. New tests:
+  `maestro_panel_shows_llm_driven_engine_when_model_online`,
+  `maestro_panel_shows_guided_setup_engine_when_model_offline`.
+* `scripts/check-doc-links.sh` — link integrity passed.
+
 ## 6. RESIDUAL RISKS
 * Gemini model enumeration is awkward against a `generateContent` endpoint; PR1 verifies
   access-token acquisition (auth) rather than a full catalog listing and documents the
@@ -156,3 +177,7 @@ _To be filled at completion of each increment with executed commands and outcome
 * The full cross-cutting retrofit spans domain, infrastructure, application,
   presentation, and docs; it is delivered as the small PR sequence above to keep merges
   reviewable and CI-green, per the repository's small-PR governance.
+* PR4 engine selection is evaluated once at interview launch. Auto-promotion A→B
+  (`reassess_engine`) currently takes effect on the next interview start after the model
+  comes online; live mid-session promotion is deferred to a later increment.
+

@@ -15,11 +15,12 @@ use crate::domain::ports::llm_provider::ProviderStatus;
 /// Selected by the SENSE stage: when a model is actually serving requests the
 /// single-voice LLM interview (Option B) runs; otherwise deterministic guided
 /// setup (Option A) runs until a model becomes available.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InterviewEngine {
     /// Option B: single-voice, LLM-driven cognitive interview.
     LlmDriven,
     /// Option A: deterministic guided setup that helps configure a model.
+    #[default]
     GuidedSetup,
 }
 
@@ -627,6 +628,11 @@ pub struct InterviewSession {
     pub target: Option<DirectiveTarget>,
     pub target_file: Option<String>,
     pub existing_content: Option<String>,
+    /// SENSE-selected engine driving this session (Option A vs Option B).
+    pub engine: InterviewEngine,
+    /// Whether a model was serving requests when the session started; gates the
+    /// scripted bus voice so the live Maestro role is the single voice online.
+    pub maestro_online: bool,
 }
 
 impl Default for InterviewSession {
@@ -642,6 +648,8 @@ impl Default for InterviewSession {
             target: None,
             target_file: None,
             existing_content: None,
+            engine: InterviewEngine::GuidedSetup,
+            maestro_online: false,
         }
     }
 }

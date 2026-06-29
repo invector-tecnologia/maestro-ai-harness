@@ -1004,3 +1004,60 @@ fn slash_commands_route_to_architect_mode() {
     let _ = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_ne!(app.mode, UIMode::Architect);
 }
+
+#[test]
+fn maestro_panel_shows_llm_driven_engine_when_model_online() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = match Terminal::new(backend) {
+        Ok(value) => value,
+        Err(_) => panic!("terminal init failed"),
+    };
+
+    let app = TuiApp {
+        mode: UIMode::Interview,
+        interview_session: Some(Arc::new(tokio::sync::RwLock::new(
+            crate::application::interview_bot::InterviewSession {
+                engine: crate::application::interview_bot::InterviewEngine::LlmDriven,
+                maestro_online: true,
+                ..Default::default()
+            },
+        ))),
+        ..TuiApp::default()
+    };
+
+    let drawn = terminal.draw(|frame| render(frame, &app));
+    assert!(drawn.is_ok());
+
+    let rendered = buffer_to_string(&terminal);
+    assert!(rendered.contains("Engine:"));
+    assert!(rendered.contains("llm-driven"));
+    assert!(rendered.contains("model online"));
+}
+
+#[test]
+fn maestro_panel_shows_guided_setup_engine_when_model_offline() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = match Terminal::new(backend) {
+        Ok(value) => value,
+        Err(_) => panic!("terminal init failed"),
+    };
+
+    let app = TuiApp {
+        mode: UIMode::Interview,
+        interview_session: Some(Arc::new(tokio::sync::RwLock::new(
+            crate::application::interview_bot::InterviewSession {
+                engine: crate::application::interview_bot::InterviewEngine::GuidedSetup,
+                maestro_online: false,
+                ..Default::default()
+            },
+        ))),
+        ..TuiApp::default()
+    };
+
+    let drawn = terminal.draw(|frame| render(frame, &app));
+    assert!(drawn.is_ok());
+
+    let rendered = buffer_to_string(&terminal);
+    assert!(rendered.contains("guided setup"));
+    assert!(rendered.contains("model offline"));
+}

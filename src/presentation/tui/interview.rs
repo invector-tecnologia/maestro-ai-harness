@@ -47,19 +47,25 @@ pub(super) async fn enqueue_interview_question(
             user_answer: String::new(),
             timestamp: SystemTime::now(),
         });
+    let maestro_online = session.maestro_online;
     drop(session);
 
     app.maestro_message_id = Some(question_id);
     app.logs.push(format!("maestro: {}", question_text));
 
-    if let Some(env) = environment {
-        let _ = env
-            .publish(Message::new(
-                "Maestro".to_string(),
-                format!("Interview question {}: {}", next_turn, question_text),
-                None,
-            ))
-            .await;
+    // When a model is online (Option B), the live Maestro role is the single
+    // voice on the environment bus; do not also emit the scripted question to
+    // avoid a duplicate Maestro voice in shared history.
+    if !maestro_online {
+        if let Some(env) = environment {
+            let _ = env
+                .publish(Message::new(
+                    "Maestro".to_string(),
+                    format!("Interview question {}: {}", next_turn, question_text),
+                    None,
+                ))
+                .await;
+        }
     }
 
     Ok(true)

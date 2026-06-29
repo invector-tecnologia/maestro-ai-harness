@@ -248,14 +248,46 @@ pub async fn run_tui(
     let should_enter_interview = should_enter_interview(_bootstrap, app.readiness.is_ready());
 
     if should_enter_interview {
+        // SENSE stage: probe the configured provider to decide which interview
+        // engine drives onboarding (Option B when a model is serving, Option A
+        // guided setup otherwise).
+        let provider_status =
+            crate::application::readiness::probe_default_provider(&root_path).await;
+        let engine = crate::application::interview_bot::InterviewEngine::from_provider_status(
+            provider_status,
+        );
+        let maestro_online = engine.is_llm_driven();
+
         app.logs
             .push("💬 Starting setup interview with Maestro...".to_string());
+        app.logs.push(format!(
+            "🧭 Interview engine: {} (model {}).",
+            engine.label(),
+            if maestro_online { "online" } else { "offline" }
+        ));
         app.mode = UIMode::Interview;
         app.interview_bot = Some(Arc::new(
             crate::application::interview_bot::InterviewBot::new(),
         ));
-        let session = crate::application::interview_bot::InterviewSession::default();
+        let session = crate::application::interview_bot::InterviewSession {
+            engine,
+            maestro_online,
+            ..Default::default()
+        };
         app.interview_session = Some(Arc::new(tokio::sync::RwLock::new(session)));
+
+        if !maestro_online {
+            // Option A: guide the user to bring a model online. The interview
+            // promotes to the LLM-driven engine on the next launch once the
+            // provider probe reports the model as available.
+            app.logs.push(
+                "🛠️ No model is serving yet — running guided setup to enable the LLM interview:"
+                    .to_string(),
+            );
+            for step in crate::application::interview_bot::guided_setup_actions(provider_status) {
+                app.logs.push(format!("  → {step}"));
+            }
+        }
 
         if matches!(_bootstrap, OnboardingBootstrap::InitInterview) && app.readiness.is_ready() {
             app.logs
