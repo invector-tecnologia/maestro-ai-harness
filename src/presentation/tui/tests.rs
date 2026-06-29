@@ -1096,3 +1096,179 @@ fn thinking_since_tracks_maestro_think_state() {
         "thinking_since clears once Maestro stops thinking"
     );
 }
+
+// --- Task 045: Active interview authoring ---------------------------------
+
+fn llm_interview_app() -> TuiApp {
+    let session = crate::application::interview_bot::InterviewSession {
+        engine: crate::application::interview_bot::InterviewEngine::LlmDriven,
+        ..Default::default()
+    };
+    TuiApp {
+        mode: UIMode::Interview,
+        interview_session: Some(Arc::new(tokio::sync::RwLock::new(session))),
+        ..TuiApp::default()
+    }
+}
+
+#[tokio::test]
+async fn detect_stages_governed_proposal_from_maestro() {
+    let mut app = llm_interview_app();
+    let content = "Here is the plan:\n```json\n{\"changes\":[{\"op\":\"create\",\"kind\":\"scope\",\"name\":\"Checkout\",\"file\":\"001-checkout.md\",\"content\":\"# Checkout\"}]}\n```";
+    let history = vec![Message::new(
+        "Maestro".to_string(),
+        content.to_string(),
+        None,
+    )];
+
+    let staged = detect_and_stage_maestro_proposal(&mut app, &history).await;
+
+    assert!(staged, "a fenced-json proposal should stage changes");
+    assert!(app.approval_modal_visible);
+    if let Some(lock) = &app.interview_session {
+        let session = lock.read().await;
+        assert_eq!(session.pending_changes.len(), 1);
+        assert!(session.confirmation_pending);
+    } else {
+        panic!("interview session missing");
+    }
+}
+
+#[tokio::test]
+async fn detect_ignores_conversational_message() {
+    let mut app = llm_interview_app();
+    let history = vec![Message::new(
+        "Maestro".to_string(),
+        "What problem should this project solve first?".to_string(),
+        None,
+    )];
+
+    let staged = detect_and_stage_maestro_proposal(&mut app, &history).await;
+
+    assert!(!staged, "prose questions should not stage changes");
+    assert!(!app.approval_modal_visible);
+}
+
+#[tokio::test]
+async fn detect_skips_already_scanned_message() {
+    let mut app = llm_interview_app();
+    let content = "```json\n{\"changes\":[{\"op\":\"create\",\"kind\":\"scope\",\"name\":\"X\",\"file\":\"001-x.md\",\"content\":\"# X\"}]}\n```";
+    let history = vec![Message::new(
+        "Maestro".to_string(),
+        content.to_string(),
+        None,
+    )];
+
+    assert!(detect_and_stage_maestro_proposal(&mut app, &history).await);
+    // Reset the confirmation gate but keep the scanned id; a re-scan must skip it.
+    if let Some(lock) = &app.interview_session {
+        let mut session = lock.write().await;
+        session.confirmation_pending = false;
+        session.pending_changes.clear();
+    }
+    app.approval_modal_visible = false;
+
+    let restaged = detect_and_stage_maestro_proposal(&mut app, &history).await;
+    assert!(!restaged, "an already-scanned message is not re-parsed");
+}
+
+#[tokio::test]
+async fn detect_filters_maestro_targeted_changes() {
+    let mut app = llm_interview_app();
+    let content = "```json\n{\"changes\":[{\"op\":\"update\",\"kind\":\"persona\",\"name\":\"Maestro\",\"file\":\"maestro.md\",\"content\":\"# Maestro\"}]}\n```";
+    let history = vec![Message::new(
+        "Maestro".to_string(),
+        content.to_string(),
+        None,
+    )];
+
+    let staged = detect_and_stage_maestro_proposal(&mut app, &history).await;
+
+    assert!(
+        !staged,
+        "changes targeting the immutable Maestro persona never stage"
+    );
+    assert!(!app.approval_modal_visible);
+}
+
+#[tokio::test]
+async fn apply_directive_changes_writes_scope_through_governance() {
+    let root = temp_root("maestro-active-apply");
+    let created = fs::create_dir_all(&root);
+    assert!(created.is_ok());
+
+    let governance = MarkdownGovernance::new(&root);
+    let ensured = governance.ensure_directories();
+    assert!(ensured.is_ok());
+
+    let old_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let changed = std::env::set_current_dir(&root);
+    assert!(changed.is_ok());
+
+    let mut app = TuiApp::default();
+    let change = crate::application::interview_bot::DirectiveFileChange {
+        op: crate::application::interview_bot::FileOp::Create,
+        target: crate::application::interview_bot::DirectiveTarget::Scope {
+            name: "Project Setup".to_string(),
+        },
+        file_name: "001-project-setup.md".to_string(),
+        content: Some(
+            "## Objective\nStart project\n\n## Business Scope\nInitial delivery\n\n## Deliverables\nScope file\n\n## Acceptance Criteria\nFile persisted\n\n## Dependencies\nNone\n"
+                .to_string(),
+        ),
+    };
+
+    let written = apply_directive_changes(&mut app, &governance, &[change]);
+
+    let restored = std::env::set_current_dir(&old_dir);
+    assert!(restored.is_ok());
+
+    assert_eq!(written, 1, "one scope file should be written");
+    let scopes = fs::read_dir(governance.scopes_dir())
+        .unwrap_or_else(|_| panic!("cannot read scopes dir"))
+        .flatten()
+        .collect::<Vec<_>>();
+    assert!(!scopes.is_empty(), "scope file should exist on disk");
+}
+
+#[tokio::test]
+async fn handoff_switches_to_workspace_and_clears_pending() {
+    let root = temp_root("maestro-active-handoff");
+    let created = fs::create_dir_all(&root);
+    assert!(created.is_ok());
+    let governance = MarkdownGovernance::new(&root);
+
+    let session = crate::application::interview_bot::InterviewSession {
+        engine: crate::application::interview_bot::InterviewEngine::LlmDriven,
+        confirmation_pending: true,
+        approval_pending: true,
+        pending_changes: vec![crate::application::interview_bot::DirectiveFileChange {
+            op: crate::application::interview_bot::FileOp::Create,
+            target: crate::application::interview_bot::DirectiveTarget::Scope {
+                name: "X".to_string(),
+            },
+            file_name: "001-x.md".to_string(),
+            content: Some("# X".to_string()),
+        }],
+        ..Default::default()
+    };
+    let mut app = TuiApp {
+        mode: UIMode::Interview,
+        approval_modal_visible: true,
+        interview_session: Some(Arc::new(tokio::sync::RwLock::new(session))),
+        ..TuiApp::default()
+    };
+
+    handoff_to_workspace(&mut app, &governance, None, None, None).await;
+
+    assert_eq!(app.mode, UIMode::Workspace);
+    assert!(!app.approval_modal_visible);
+    if let Some(lock) = &app.interview_session {
+        let session = lock.read().await;
+        assert!(session.pending_changes.is_empty());
+        assert!(!session.confirmation_pending);
+        assert!(!session.approval_pending);
+    } else {
+        panic!("interview session missing");
+    }
+}

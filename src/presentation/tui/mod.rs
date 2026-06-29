@@ -206,6 +206,7 @@ pub async fn run_tui(
     environment: Option<Arc<Environment>>,
     runtime: Option<Arc<AgentRuntime>>,
     _bootstrap: OnboardingBootstrap,
+    router: Option<crate::application::model_router::ModelRouter>,
 ) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut app = TuiApp {
@@ -342,6 +343,12 @@ pub async fn run_tui(
             };
             app.update_logs_from_history(&history);
 
+            // LLM-driven interview: scan Maestro's latest bus message for a
+            // governed-file proposal and stage it for confirmation.
+            if app.mode == UIMode::Interview && !app.approval_modal_visible {
+                detect_and_stage_maestro_proposal(&mut app, &history).await;
+            }
+
             let runtime_events = if let Some(rt) = &runtime {
                 rt.events_snapshot().await
             } else {
@@ -442,7 +449,20 @@ pub async fn run_tui(
                                             .await;
                                     }
 
-                                    if let (Some(bot), Some(session_lock)) =
+                                    let is_llm_driven = if let Some(session_lock) =
+                                        &app.interview_session
+                                    {
+                                        session_lock.read().await.engine.is_llm_driven()
+                                    } else {
+                                        false
+                                    };
+
+                                    if is_llm_driven {
+                                        // Maestro drives the LLM-driven interview: it asks
+                                        // the next question or emits a proposal on the bus,
+                                        // which the loop detects and stages. The scripted
+                                        // question/heuristic path is bypassed here.
+                                    } else if let (Some(bot), Some(session_lock)) =
                                         (&app.interview_bot, &app.interview_session)
                                     {
                                         let message_id = app.maestro_message_id.unwrap_or_else(Uuid::new_v4);
@@ -553,6 +573,38 @@ pub async fn run_tui(
                             Some(UserAction::ApproveInterviewProposals) => {
                                 app.approval_modal_visible = false;
 
+                                let pending = if let Some(session_lock) = &app.interview_session {
+                                    session_lock.read().await.pending_changes.clone()
+                                } else {
+                                    Vec::new()
+                                };
+
+                                if !pending.is_empty() {
+                                    // LLM-driven path: Maestro authored governed files
+                                    // directly. Apply through governance, then hand the
+                                    // project off to the Workspace runtime.
+                                    let written =
+                                        apply_directive_changes(&mut app, &governance, &pending);
+                                    app.logs.push(format!(
+                                        "✅ Applied {} of {} Maestro-proposed change(s).",
+                                        written,
+                                        pending.len()
+                                    ));
+                                    let root = std::env::current_dir()
+                                        .unwrap_or_else(|_| PathBuf::from("."));
+                                    app.readiness =
+                                        crate::application::readiness::run_checks(&root);
+                                    handoff_to_workspace(
+                                        &mut app,
+                                        &governance,
+                                        runtime.as_ref(),
+                                        router.as_ref(),
+                                        environment.as_ref(),
+                                    )
+                                    .await;
+                                    continue;
+                                }
+
                                 let is_directive = if let Some(session_lock) = &app.interview_session {
                                     session_lock.read().await.target.is_some()
                                 } else {
@@ -590,14 +642,33 @@ pub async fn run_tui(
                             }
                             Some(UserAction::RejectInterviewProposals) => {
                                 app.approval_modal_visible = false;
-                                if let Some(session_lock) = &app.interview_session {
+                                let had_pending = if let Some(session_lock) = &app.interview_session {
                                     let mut session = session_lock.write().await;
+                                    let had = !session.pending_changes.is_empty();
+                                    session.pending_changes.clear();
+                                    session.confirmation_pending = false;
                                     session.approval_pending = false;
-                                    session.proposed_changes = None;
+                                    if !had {
+                                        session.proposed_changes = None;
+                                    }
+                                    had
+                                } else {
+                                    false
+                                };
+
+                                if had_pending {
+                                    // LLM-driven path: keep the conversation open so the
+                                    // user can tell Maestro what to adjust; Maestro will
+                                    // re-propose and the loop will stage the new changes.
+                                    app.logs.push(
+                                        "❓ Understood — tell Maestro what to adjust and it will repropose."
+                                            .to_string(),
+                                    );
+                                } else {
+                                    app.logs
+                                        .push("❓ Understood. Let us refine requirements before generating new scope drafts.".to_string());
+                                    let _ = enqueue_interview_question(&mut app, environment.as_ref()).await?;
                                 }
-                                app.logs
-                                    .push("❓ Understood. Let us refine requirements before generating new scope drafts.".to_string());
-                                let _ = enqueue_interview_question(&mut app, environment.as_ref()).await?;
                             }
                             Some(UserAction::Logout) => {
                                 let _ = GeminiAdapter::clear_credentials();

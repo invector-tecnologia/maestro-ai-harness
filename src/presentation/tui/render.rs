@@ -610,7 +610,18 @@ fn render_approval_modal(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app
     let mut proposal_text = vec!["Maestro's Recommendations:".to_string(), "".to_string()];
     if let Some(session_lock) = &app.interview_session {
         if let Ok(session) = session_lock.try_read() {
-            if let Some(proposals) = &session.proposed_changes {
+            if !session.pending_changes.is_empty() {
+                proposal_text.push("Maestro will write these governed files:".to_string());
+                proposal_text.push("".to_string());
+                for change in session.pending_changes.iter().take(6) {
+                    proposal_text.push(format!(
+                        "  • {} {} → {}",
+                        change.op.label(),
+                        change.target.kind_label(),
+                        change.file_name
+                    ));
+                }
+            } else if let Some(proposals) = &session.proposed_changes {
                 proposal_text.push(proposals.summary.clone());
                 proposal_text.push("".to_string());
                 proposal_text.push("Scope drafts (Product handoff):".to_string());

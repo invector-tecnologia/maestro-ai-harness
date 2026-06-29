@@ -633,6 +633,14 @@ pub struct InterviewSession {
     /// Whether a model was serving requests when the session started; gates the
     /// scripted bus voice so the live Maestro role is the single voice online.
     pub maestro_online: bool,
+    /// Governed file changes Maestro proposed via the live bus (LLM-driven path),
+    /// staged for confirmation before any write. Empty until a proposal is parsed.
+    pub pending_changes: Vec<DirectiveFileChange>,
+    /// Id of the last `Maestro` bus message scanned for a proposal, so the same
+    /// message is not re-parsed across render ticks.
+    pub last_parsed_maestro_msg: Option<Uuid>,
+    /// Whether the user is being asked to confirm `pending_changes` before a write.
+    pub confirmation_pending: bool,
 }
 
 impl Default for InterviewSession {
@@ -650,6 +658,9 @@ impl Default for InterviewSession {
             existing_content: None,
             engine: InterviewEngine::GuidedSetup,
             maestro_online: false,
+            pending_changes: Vec::new(),
+            last_parsed_maestro_msg: None,
+            confirmation_pending: false,
         }
     }
 }

@@ -396,3 +396,160 @@ pub(super) async fn run_maestro_wakeup_check(
     app.maestro_message_id = None;
     false
 }
+
+/// Scan the latest unscanned `Maestro` bus message for a governed-file proposal
+/// and, when found, stage it for confirmation (LLM-driven engine only).
+///
+/// Returns `true` when changes were staged. Conversational messages, already
+/// scanned messages, and changes targeting the immutable Maestro persona never
+/// stage anything. A parse failure is treated as a normal question: the message
+/// id is recorded so it is not re-parsed on subsequent ticks.
+pub(super) async fn detect_and_stage_maestro_proposal(
+    app: &mut TuiApp,
+    history: &[Message],
+) -> bool {
+    let Some(session_lock) = app.interview_session.clone() else {
+        return false;
+    };
+
+    {
+        let session = session_lock.read().await;
+        if !session.engine.is_llm_driven() || session.confirmation_pending {
+            return false;
+        }
+    }
+
+    let Some(latest) = history
+        .iter()
+        .rev()
+        .find(|msg| msg.sender().eq_ignore_ascii_case("maestro"))
+    else {
+        return false;
+    };
+    let latest_id = latest.id();
+
+    {
+        let session = session_lock.read().await;
+        if session.last_parsed_maestro_msg == Some(latest_id) {
+            return false;
+        }
+    }
+
+    let parsed = crate::application::interview_bot::parse_directive_proposals(latest.content());
+
+    let mut session = session_lock.write().await;
+    session.last_parsed_maestro_msg = Some(latest_id);
+
+    let changes = match parsed {
+        Ok(changes) => changes,
+        Err(_) => return false,
+    };
+
+    let staged: Vec<_> = changes
+        .into_iter()
+        .filter(|change| !change.target.targets_maestro())
+        .collect();
+
+    if staged.is_empty() {
+        return false;
+    }
+
+    let count = staged.len();
+    session.pending_changes = staged;
+    session.confirmation_pending = true;
+    drop(session);
+
+    app.approval_modal_visible = true;
+    app.logs.push(format!(
+        "🧩 Maestro proposed {} file change(s). Approve (y) to write, or refine (n).",
+        count
+    ));
+    true
+}
+
+/// Apply staged governed-file changes through markdown governance, logging each
+/// outcome. Returns the number of files written (created/edited/updated).
+pub(super) fn apply_directive_changes(
+    app: &mut TuiApp,
+    governance: &MarkdownGovernance,
+    changes: &[crate::application::interview_bot::DirectiveFileChange],
+) -> usize {
+    use crate::application::interview_bot::{apply_directive_change, AppliedChange};
+
+    let mut written = 0_usize;
+    for change in changes {
+        let kind = change.target.kind_label();
+        match apply_directive_change(governance, change) {
+            Ok(AppliedChange::Written(path)) => {
+                written = written.saturating_add(1);
+                app.logs
+                    .push(format!("✅ {} written: {}", kind, path.display()));
+            }
+            Ok(AppliedChange::Archived(path)) => {
+                app.logs
+                    .push(format!("🗄️ {} archived: {}", kind, path.display()));
+            }
+            Ok(AppliedChange::Read { path, .. }) => {
+                app.logs
+                    .push(format!("📖 {} read: {}", kind, path.display()));
+            }
+            Err(error) => {
+                app.logs
+                    .push(format!("❌ Could not apply {} change: {}", kind, error));
+            }
+        }
+    }
+    written
+}
+
+/// Hand the authored project off to the Workspace runtime: install the full
+/// governed sequential pipeline (replacing the interview's single Maestro
+/// subscriber) and switch the UI to Workspace mode so the user's next
+/// instruction orchestrates the whole agent team.
+pub(super) async fn handoff_to_workspace(
+    app: &mut TuiApp,
+    governance: &MarkdownGovernance,
+    runtime: Option<&Arc<AgentRuntime>>,
+    router: Option<&crate::application::model_router::ModelRouter>,
+    environment: Option<&Arc<Environment>>,
+) {
+    app.mode = UIMode::Workspace;
+    app.approval_modal_visible = false;
+
+    if let Some(session_lock) = &app.interview_session {
+        let mut session = session_lock.write().await;
+        session.pending_changes.clear();
+        session.confirmation_pending = false;
+        session.approval_pending = false;
+    }
+
+    match (runtime, router) {
+        (Some(rt), Some(router)) => {
+            let registrations =
+                crate::application::persona_operations::registrations_from_governance(
+                    router, governance,
+                );
+            let _ = rt.stop_all().await;
+            rt.set_sequential_pipeline(registrations).await;
+            app.logs
+                .push("🛠️ Workspace ready — full agent team is online.".to_string());
+        }
+        _ => {
+            app.logs.push(
+                "🛠️ Workspace ready. Configure provider/model to orchestrate the full team."
+                    .to_string(),
+            );
+        }
+    }
+
+    if let Some(env) = environment {
+        let _ = env
+            .publish(Message::new(
+                "Maestro".to_string(),
+                "✅ Project scaffolding is ready. Send your first build instruction and I'll coordinate the team."
+                    .to_string(),
+                None,
+            ))
+            .await;
+    }
+}

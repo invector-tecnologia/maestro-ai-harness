@@ -531,6 +531,7 @@ async fn run_tui_with_runtime(
 ) -> Result<()> {
     let environment = Arc::new(Environment::new(128));
     let mut runtime: Option<Arc<AgentRuntime>> = None;
+    let mut handoff_router: Option<crate::application::model_router::ModelRouter> = None;
 
     match ConfigLoader::load(config) {
         Ok(cfg) => {
@@ -548,6 +549,7 @@ async fn run_tui_with_runtime(
             match registry.build_model_router(&cfg) {
                 Ok(router) => {
                     let default_label = router.default_label().clone();
+                    handoff_router = Some(router.clone());
                     if let Err(error) = probe_active_default_model(
                         router.default_provider().as_ref(),
                         &default_label.provider,
@@ -562,9 +564,13 @@ async fn run_tui_with_runtime(
                                 None,
                             ))
                             .await;
-                        let tui_result =
-                            run_tui(Some(Arc::clone(&environment)), runtime.clone(), bootstrap)
-                                .await;
+                        let tui_result = run_tui(
+                            Some(Arc::clone(&environment)),
+                            runtime.clone(),
+                            bootstrap,
+                            handoff_router.clone(),
+                        )
+                        .await;
                         if let Some(rt) = runtime {
                             let _ = rt.stop_all().await;
                         }
@@ -638,7 +644,13 @@ async fn run_tui_with_runtime(
         }
     }
 
-    let tui_result = run_tui(Some(Arc::clone(&environment)), runtime.clone(), bootstrap).await;
+    let tui_result = run_tui(
+        Some(Arc::clone(&environment)),
+        runtime.clone(),
+        bootstrap,
+        handoff_router,
+    )
+    .await;
     if let Some(rt) = runtime {
         let _ = rt.stop_all().await;
     }

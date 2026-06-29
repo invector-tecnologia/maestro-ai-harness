@@ -34,7 +34,14 @@ maestro tui --config ~/.config/maestro/config.yml
 Before the interview starts, Maestro probes the configured default provider to sense
 whether a model is actually available, then selects an engine automatically:
 - **LLM-driven interview (model online):** Maestro conducts the onboarding as a single
-  cognitive voice and can author your configuration files directly.
+  cognitive voice and can author your configuration files directly. It drives the
+  conversation live — guiding, processing each answer, and confirming — and when it has
+  enough context it proposes governed file changes (project scopes plus the persona/skill
+  additions they imply). Proposals are staged for your approval, never written silently:
+  press `y` to write every change through markdown governance, or `n` to keep talking and
+  let Maestro refine. The immutable Maestro persona is never a proposal target. Once
+  changes are written, Maestro installs the full agent team and switches you to Workspace
+  Mode so your next instruction starts the build.
 - **Guided setup (model offline):** when no model is reachable, Maestro switches to a
   scripted guided setup that lists the steps to get a provider running, then
   auto-promotes to the LLM-driven interview the next time onboarding starts once a model
