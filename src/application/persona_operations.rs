@@ -6,6 +6,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use crate::application::agent_runtime::AgentRegistration;
+use crate::application::model_router::ModelRouter;
 use crate::application::persona::{Persona, PersonaCatalog, PersonaError};
 use crate::domain::models::message::Message;
 use crate::domain::ports::llm_provider::LlmProvider;
@@ -137,7 +138,7 @@ impl Role for PersonaRuntimeRole {
 }
 
 pub fn registrations_from_default_personas(
-    llm_provider: Arc<dyn LlmProvider>,
+    router: &ModelRouter,
 ) -> Result<Vec<AgentRegistration>, PersonaOperationsError> {
     let catalog = PersonaCatalog::default_personas();
     catalog.validate()?;
@@ -145,9 +146,12 @@ pub fn registrations_from_default_personas(
     let registrations = catalog
         .personas
         .into_iter()
-        .map(|persona| AgentRegistration {
-            name: persona.name.clone(),
-            role: Arc::new(PersonaRuntimeRole::new(persona, Arc::clone(&llm_provider))),
+        .map(|persona| {
+            let provider = router.route_for(&persona.name);
+            AgentRegistration {
+                name: persona.name.clone(),
+                role: Arc::new(PersonaRuntimeRole::new(persona, provider)),
+            }
         })
         .collect::<Vec<_>>();
 
@@ -157,22 +161,26 @@ pub fn registrations_from_default_personas(
 /// Build runtime registrations from the governed persona catalog, resolving
 /// Architect Mode edits into the live agent set. Falls back to in-code defaults when
 /// governance is empty or invalid (handled inside `PersonaCatalog::from_governance`).
+/// Each persona is routed to its assigned model via the [`ModelRouter`].
 pub fn registrations_from_governance(
-    llm_provider: Arc<dyn LlmProvider>,
+    router: &ModelRouter,
     governance: &crate::application::markdown_governance::MarkdownGovernance,
 ) -> Vec<AgentRegistration> {
     PersonaCatalog::from_governance(governance)
         .personas
         .into_iter()
-        .map(|persona| AgentRegistration {
-            name: persona.name.clone(),
-            role: Arc::new(PersonaRuntimeRole::new(persona, Arc::clone(&llm_provider))),
+        .map(|persona| {
+            let provider = router.route_for(&persona.name);
+            AgentRegistration {
+                name: persona.name.clone(),
+                role: Arc::new(PersonaRuntimeRole::new(persona, provider)),
+            }
         })
         .collect::<Vec<_>>()
 }
 
 pub fn registrations_from_selected_personas(
-    llm_provider: Arc<dyn LlmProvider>,
+    router: &ModelRouter,
     selected_names: &[&str],
 ) -> Result<Vec<AgentRegistration>, PersonaOperationsError> {
     let catalog = PersonaCatalog::default_personas();
@@ -194,9 +202,12 @@ pub fn registrations_from_selected_personas(
         .personas
         .into_iter()
         .filter(|persona| selected.contains(&persona.name))
-        .map(|persona| AgentRegistration {
-            name: persona.name.clone(),
-            role: Arc::new(PersonaRuntimeRole::new(persona, Arc::clone(&llm_provider))),
+        .map(|persona| {
+            let provider = router.route_for(&persona.name);
+            AgentRegistration {
+                name: persona.name.clone(),
+                role: Arc::new(PersonaRuntimeRole::new(persona, provider)),
+            }
         })
         .collect::<Vec<_>>();
 
@@ -276,8 +287,15 @@ mod tests {
         let environment = Arc::new(Environment::new(64));
         let runtime = AgentRuntime::new(Arc::clone(&environment));
         let provider: Arc<dyn LlmProvider> = Arc::new(DummyLlmProvider);
+        let router = crate::application::model_router::ModelRouter::uniform(
+            provider,
+            crate::application::model_router::ModelAssignmentLabel {
+                provider: "test".to_string(),
+                model: "dummy".to_string(),
+            },
+        );
 
-        let registrations = registrations_from_default_personas(provider);
+        let registrations = registrations_from_default_personas(&router);
         assert!(registrations.is_ok());
 
         let started = runtime
@@ -346,7 +364,14 @@ mod tests {
     #[test]
     fn selected_persona_registration_returns_only_requested_persona() {
         let provider: Arc<dyn LlmProvider> = Arc::new(DummyLlmProvider);
-        let registrations = registrations_from_selected_personas(provider, &["Maestro"]);
+        let router = crate::application::model_router::ModelRouter::uniform(
+            provider,
+            crate::application::model_router::ModelAssignmentLabel {
+                provider: "test".to_string(),
+                model: "dummy".to_string(),
+            },
+        );
+        let registrations = registrations_from_selected_personas(&router, &["Maestro"]);
         assert!(registrations.is_ok());
 
         let registrations = registrations.unwrap_or_default();

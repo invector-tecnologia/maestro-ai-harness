@@ -24,15 +24,15 @@ pub struct AnthropicAdapter {
 impl AnthropicAdapter {
     pub fn from_provider_config(
         provider: &ProviderConfig,
+        model: &str,
     ) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError> {
-        let model = provider
+        let model_spec = provider
             .models
-            .first()
-            .map(|m| m.name.clone())
-            .ok_or_else(|| {
-                ProviderRegistryError::InconsistentConfig(
-                    "Anthropic provider has no configured models".to_string(),
-                )
+            .iter()
+            .find(|m| m.name == model)
+            .ok_or_else(|| ProviderRegistryError::ModelNotConfigured {
+                provider: provider.kind.clone(),
+                model: model.to_string(),
             })?;
 
         let timeout = Duration::from_millis(provider.timeout_ms);
@@ -55,16 +55,12 @@ impl AnthropicAdapter {
             }
         };
 
-        let max_context_tokens = provider
-            .models
-            .first()
-            .map(|m| m.context_window)
-            .unwrap_or(200000);
+        let max_context_tokens = model_spec.context_window;
 
         Ok(Arc::new(Self {
             client,
             endpoint: format!("{}/v1/messages", provider.endpoint.trim_end_matches('/')),
-            model,
+            model: model.to_string(),
             bearer_token,
             max_context_tokens,
         }))

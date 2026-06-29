@@ -27,15 +27,15 @@ pub struct OllamaAdapter {
 impl OllamaAdapter {
     pub fn from_provider_config(
         provider: &ProviderConfig,
+        model: &str,
     ) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError> {
-        let model = provider
+        let model_spec = provider
             .models
-            .first()
-            .map(|m| m.name.clone())
-            .ok_or_else(|| {
-                ProviderRegistryError::InconsistentConfig(
-                    "Ollama provider has no configured models".to_string(),
-                )
+            .iter()
+            .find(|m| m.name == model)
+            .ok_or_else(|| ProviderRegistryError::ModelNotConfigured {
+                provider: provider.kind.clone(),
+                model: model.to_string(),
             })?;
 
         let timeout = Duration::from_millis(provider.timeout_ms);
@@ -58,16 +58,12 @@ impl OllamaAdapter {
             }
         };
 
-        let max_context_chars = provider
-            .models
-            .first()
-            .map(|m| m.context_window)
-            .unwrap_or(32000);
+        let max_context_chars = model_spec.context_window;
 
         Ok(Arc::new(Self {
             client,
             endpoint: normalize_ollama_chat_endpoint(&provider.endpoint),
-            model,
+            model: model.to_string(),
             bearer_token,
             max_context_chars,
         }))

@@ -48,12 +48,14 @@ pub fn run_checks(root: &Path) -> ReadinessState {
         dummy_guide: "How-To: Ensure your PATH environment variable is exported correctly in your shell profile (~/.bashrc or ~/.zshrc).".to_string(),
     });
 
-    let config_path = root.join("maestro").join("config.yaml");
+    let maestro_dir = root.join("maestro");
+    let config_path = crate::application::config::existing_config_in(&maestro_dir)
+        .unwrap_or_else(|| maestro_dir.join(crate::application::config::CONFIG_FILE_NAME));
     let has_config = config_path.exists();
     items.push(ReadinessItem {
         name: "Maestro configuration file".to_string(),
         passed: has_config,
-        dummy_guide: "How-To: Create a 'maestro/config.yaml' file by running 'maestro init-config' or setting it up manually.".to_string(),
+        dummy_guide: "How-To: Create a 'maestro/config.yml' file by running 'maestro init-config' or setting it up manually.".to_string(),
     });
 
     let mut config_valid = false;
@@ -74,7 +76,7 @@ pub fn run_checks(root: &Path) -> ReadinessState {
                 items.push(ReadinessItem {
                     name: "Providers Configuration".to_string(),
                     passed: has_providers,
-                    dummy_guide: "How-To: Define at least one provider in 'maestro/config.yaml' under providers:.".to_string(),
+                    dummy_guide: "How-To: Define at least one provider in 'maestro/config.yml' under providers:.".to_string(),
                 });
 
                 if has_providers {
@@ -90,7 +92,7 @@ pub fn run_checks(root: &Path) -> ReadinessState {
                         items.push(ReadinessItem {
                             name: "Provider Reachability".to_string(),
                             passed: false,
-                            dummy_guide: "How-To: Ensure 'system.default_provider' matches a defined provider in config.yaml.".to_string(),
+                            dummy_guide: "How-To: Ensure 'system.default_provider' matches a defined provider in config.yml.".to_string(),
                         });
                     }
                 }
@@ -100,7 +102,7 @@ pub fn run_checks(root: &Path) -> ReadinessState {
                     name: "Configuration Content".to_string(),
                     passed: false,
                     dummy_guide: format!(
-                        "How-To: Fix the following error in your config.yaml: {}",
+                        "How-To: Fix the following error in your config.yml: {}",
                         e
                     ),
                 });
@@ -260,13 +262,12 @@ pub fn skills_has_markdown(skills_dir: &Path) -> bool {
 }
 
 /// Auto-bootstrap configuration if missing.
-/// Creates maestro/config.yaml with detected provider endpoints.
+/// Creates maestro/config.yml with detected provider endpoints.
 pub fn auto_bootstrap_config(root: &Path) -> Result<bool, Box<dyn std::error::Error>> {
     let maestro_dir = root.join("maestro");
     std::fs::create_dir_all(&maestro_dir)?;
 
-    let config_path = maestro_dir.join("config.yaml");
-    if config_path.exists() {
+    if let Some(config_path) = crate::application::config::existing_config_in(&maestro_dir) {
         // Never overwrite a user-owned config. If invalid, provide an actionable error.
         if ConfigLoader::load(Some(config_path.clone())).is_ok() {
             return Ok(false);
@@ -281,6 +282,7 @@ pub fn auto_bootstrap_config(root: &Path) -> Result<bool, Box<dyn std::error::Er
         )));
     }
 
+    let config_path = maestro_dir.join(crate::application::config::CONFIG_FILE_NAME);
     let config_content = crate::application::config::DEFAULT_CONFIG_TEMPLATE.to_string();
 
     std::fs::write(&config_path, config_content)?;
@@ -313,7 +315,7 @@ mod tests {
         let bootstrapped = auto_bootstrap_config(&root);
         assert!(matches!(bootstrapped, Ok(true)));
 
-        let config_path = root.join("maestro").join("config.yaml");
+        let config_path = root.join("maestro").join("config.yml");
         assert!(config_path.exists());
         let loaded = ConfigLoader::load(Some(config_path));
         assert!(loaded.is_ok());

@@ -180,11 +180,18 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             let cfg = ConfigLoader::load(config)?;
             let mut registry = ProviderRegistry::new();
             registry.register_builtin_providers()?;
-            let resolved = registry.resolve_default(&cfg)?;
+            let router = registry.build_model_router(&cfg)?;
 
             let environment = Arc::new(Environment::new(128));
             let runtime = Arc::new(AgentRuntime::new(Arc::clone(&environment)));
-            let registrations = registrations_from_default_personas(resolved.provider)?;
+            let registrations = registrations_from_default_personas(&router)?;
+            for registration in &registrations {
+                info!(
+                    agent = %registration.name,
+                    route = %router.label_for(&registration.name).descriptor(),
+                    "agent model route"
+                );
+            }
             runtime.start_agents(registrations).await?;
             tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
             runtime.stop_all().await?;
@@ -260,7 +267,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
             let root = std::env::current_dir()?;
             let maestro_dir = root.join("maestro");
             fs::create_dir_all(&maestro_dir)?;
-            let config_file = maestro_dir.join("config.yaml");
+            let config_file = maestro_dir.join("config.yml");
             if !config_file.exists() {
                 fs::write(
                     &config_file,
@@ -282,7 +289,7 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
 
             let maestro_dir = root.join("maestro");
             fs::create_dir_all(&maestro_dir)?;
-            let config_file = maestro_dir.join("config.yaml");
+            let config_file = maestro_dir.join("config.yml");
             if !config_file.exists() {
                 fs::write(
                     &config_file,
@@ -376,11 +383,17 @@ pub async fn execute(cli: Cli) -> Result<CliOutcome> {
                         None => std::env::current_dir()?,
                     };
 
+                    let maestro_dir = corpus_root.join("maestro");
+                    let config_corpus_path =
+                        crate::application::config::existing_config_in(&maestro_dir)
+                            .unwrap_or_else(|| {
+                                maestro_dir.join(crate::application::config::CONFIG_FILE_NAME)
+                            });
                     let default_paths = vec![
                         corpus_root.join("docs"),
                         corpus_root.join("src"),
                         corpus_root.join("README.md"),
-                        corpus_root.join("maestro").join("config.yaml"),
+                        config_corpus_path,
                     ];
 
                     let report = rag.ingest_paths(default_paths, chunk_size_chars).await?;
@@ -437,7 +450,7 @@ fn check_harness_dependencies(config: Option<&PathBuf>) -> Result<bool> {
     let cfg = ConfigLoader::load(config.cloned())?;
     let mut registry = ProviderRegistry::new();
     registry.register_builtin_providers()?;
-    let _ = registry.resolve_default(&cfg)?;
+    let _ = registry.build_model_router(&cfg)?;
 
     let root = std::env::current_dir()?;
     let readiness = crate::application::readiness::run_checks(&root);
@@ -532,12 +545,13 @@ async fn run_tui_with_runtime(
                     .await;
             }
 
-            match registry.resolve_default(&cfg) {
-                Ok(resolved) => {
+            match registry.build_model_router(&cfg) {
+                Ok(router) => {
+                    let default_label = router.default_label().clone();
                     if let Err(error) = probe_active_default_model(
-                        resolved.provider.as_ref(),
-                        &resolved.provider_name,
-                        &resolved.model,
+                        router.default_provider().as_ref(),
+                        &default_label.provider,
+                        &default_label.model,
                     )
                     .await
                     {
@@ -560,8 +574,7 @@ async fn run_tui_with_runtime(
 
                     let rt = Arc::new(AgentRuntime::new(Arc::clone(&environment)));
                     if matches!(bootstrap, OnboardingBootstrap::InitInterview) {
-                        match registrations_from_selected_personas(resolved.provider, &["Maestro"])
-                        {
+                        match registrations_from_selected_personas(&router, &["Maestro"]) {
                             Ok(registrations) => {
                                 if let Err(error) = rt.start_agents(registrations).await {
                                     let _ = environment
@@ -591,8 +604,14 @@ async fn run_tui_with_runtime(
                         // sequentially per user prompt instead of parallel broadcast.
                         let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
                         let governance = MarkdownGovernance::new(root);
-                        let registrations =
-                            registrations_from_governance(resolved.provider, &governance);
+                        let registrations = registrations_from_governance(&router, &governance);
+                        for registration in &registrations {
+                            info!(
+                                agent = %registration.name,
+                                route = %router.label_for(&registration.name).descriptor(),
+                                "agent model route"
+                            );
+                        }
                         rt.set_sequential_pipeline(registrations).await;
                         runtime = Some(rt);
                     }

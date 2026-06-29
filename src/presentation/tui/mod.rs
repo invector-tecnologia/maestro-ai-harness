@@ -222,7 +222,7 @@ pub async fn run_tui(
     match crate::application::readiness::auto_bootstrap_config(&root_path) {
         Ok(true) => {
             app.logs
-                .push("✅ Auto-configured maestro/config.yaml (Ollama detected!)".to_string());
+                .push("✅ Auto-configured maestro/config.yml (Ollama detected!)".to_string());
         }
         Ok(false) => {
             // Config already exists
@@ -371,7 +371,7 @@ pub async fn run_tui(
 
                                 if app.maestro_message_id.is_none() {
                                     app.logs.push(
-                                        "⚠️ Maestro is not answering yet. Configure provider/model in maestro/config.yaml and restart interview."
+                                        "⚠️ Maestro is not answering yet. Configure provider/model in maestro/config.yml and restart interview."
                                             .to_string(),
                                     );
                                     continue;

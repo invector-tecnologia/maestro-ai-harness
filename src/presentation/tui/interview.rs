@@ -334,7 +334,7 @@ pub(super) async fn run_maestro_wakeup_check(
 ) -> bool {
     let Some(env) = environment else {
         app.logs.push(
-            "⚠️ Maestro runtime is not connected. Configure provider and model in maestro/config.yaml."
+            "⚠️ Maestro runtime is not connected. Configure provider and model in maestro/config.yml."
                 .to_string(),
         );
         return false;
@@ -384,7 +384,7 @@ pub(super) async fn run_maestro_wakeup_check(
     }
 
     app.logs.push(
-        "⚠️ Maestro did not answer wake-up check. Configure provider/model in maestro/config.yaml and restart interview."
+        "⚠️ Maestro did not answer wake-up check. Configure provider/model in maestro/config.yml and restart interview."
             .to_string(),
     );
     app.maestro_message_id = None;

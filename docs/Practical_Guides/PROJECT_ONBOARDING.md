@@ -17,12 +17,12 @@ maestro init my-project --no-tui
 
 ## How To Start Directly
 ```bash
-maestro onboarding --mode detailed --config ~/.config/maestro/config.yaml
+maestro onboarding --mode detailed --config ~/.config/maestro/config.yml
 ```
 
 For a quicker path with safe defaults:
 ```bash
-maestro onboarding --mode fast --config ~/.config/maestro/config.yaml
+maestro onboarding --mode fast --config ~/.config/maestro/config.yml
 ```
 
 ## Guided Flow
@@ -49,9 +49,9 @@ After completion, the project has initial artifacts in:
 ## Recommended Commands After Completion
 ```bash
 maestro list-agents
-maestro doctor --config ~/.config/maestro/config.yaml
-maestro directives --config ~/.config/maestro/config.yaml
-maestro run --config ~/.config/maestro/config.yaml --duration-ms 500
+maestro doctor --config ~/.config/maestro/config.yml
+maestro directives --config ~/.config/maestro/config.yml
+maestro run --config ~/.config/maestro/config.yml --duration-ms 500
 ```
 
 Use `maestro directives` (or `/architect` inside the TUI) to govern personas, persona skills, and scopes; return to the monitor with `/monitor`.

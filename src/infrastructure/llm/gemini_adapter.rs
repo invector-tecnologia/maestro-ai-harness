@@ -32,6 +32,7 @@ pub struct GeminiAdapter {
 impl GeminiAdapter {
     pub fn from_provider_config(
         provider: &ProviderConfig,
+        _model: &str,
     ) -> Result<Arc<dyn LlmProvider>, ProviderRegistryError> {
         let timeout = Duration::from_millis(provider.timeout_ms);
         let client = Client::builder().timeout(timeout).build().map_err(|_| {

@@ -110,7 +110,7 @@ sudo pacman -U --noconfirm target/omarchy/build/maestro-ai-0.1.0-1-$(uname -m).p
 
 ## ⚡ CONTROL DECK INITIALIZATION
 
-All governance, TUI state, and project configurations live inside the `maestro/` folder in your project root. Maestro reads `./maestro/config.yaml` first; if not found, it scans the global system config path.
+All governance, TUI state, and project configurations live inside the `maestro/` folder in your project root. Maestro reads `./maestro/config.yml` first; if not found, it scans the global system config path. A legacy `config.yaml` is still accepted with a deprecation warning.
 
 **This is your control deck schema.** Define providers, models, concurrency limits, rate limits, retry logic. Example: orchestrating Ollama locally:
 
@@ -141,6 +141,21 @@ providers:
 
 **Auth Override:** For Bearer token authentication, adjust `auth_mode` to `"bearer"` and export the token as an environment variable before launching Maestro.
 
+**Per-Agent Models:** Every model declared under a provider is available to any agent. Assign a specific provider + model to individual personas with the optional top-level `agents:` map. Agents that are not listed fall back to `system.default_provider` + `system.default_model`. The pair must exist in `providers:` or Maestro fails fast on startup.
+
+```yaml
+agents:
+  "Maestro":
+    provider: "openai"
+    model: "gpt-4-turbo"
+  "Software Engineer":
+    provider: "anthropic"
+    model: "claude-3-opus"
+  "Researcher":
+    provider: "ollama"
+    model: "mistral"
+```
+
 ---
 
 ## ⚡ COMMAND EXECUTION
@@ -157,7 +172,7 @@ providers:
 ### ⚡ Utility Commands
 
 * **`maestro doctor`** — Health scan. Validates environment, mandatory markdowns, and config readiness.
-* **`maestro init-config`** — Generates only `maestro/config.yaml`.
+* **`maestro init-config`** — Generates only `maestro/config.yml`.
 * **`maestro scaffold-markdown`** — Generates only Markdown folder structure.
 * **`maestro deps check --scope <harness|project|all>`** — Validates dependency zones independently.
 * **`maestro list-agents`** — Catalogs all registered personas.

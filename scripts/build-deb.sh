@@ -44,7 +44,7 @@ chmod 0755 "$DEBIAN_DIR/postinst" "$DEBIAN_DIR/prerm" "$DEBIAN_DIR/postrm"
 # Mark config as conffile so dpkg preserves local edits on upgrades/removal.
 mkdir -p "$PKG_DIR/etc/maestro"
 cat > "$DEBIAN_DIR/conffiles" <<'EOF'
-/etc/maestro/config.yaml
+/etc/maestro/config.yml
 EOF
 
 dpkg-deb --build "$PKG_DIR"

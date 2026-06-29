@@ -4,6 +4,7 @@ pub mod config;
 pub mod environment;
 pub mod interview_bot;
 pub mod markdown_governance;
+pub mod model_router;
 pub mod persona;
 pub mod persona_operations;
 pub mod project_deps;

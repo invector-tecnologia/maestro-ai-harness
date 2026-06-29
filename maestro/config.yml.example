@@ -1,5 +1,5 @@
 # Maestro AI Harness — System Configuration
-# Copy to maestro/config.yaml and customize for your environment
+# Copy to maestro/config.yml and customize for your environment
 # All system config is YAML (this file)
 # User content is Markdown: maestro/personas/, maestro/skills/, maestro/scopes/
 
@@ -93,6 +93,23 @@ providers:
       supports_json_mode: false
       supports_reasoning_controls: false
       max_context_tokens: 1000000
+
+# Optional: per-agent model assignment
+# Each persona (by name) can run on a different provider + model. Any model
+# declared under a provider above is available to any agent. Agents not listed
+# here fall back to system.default_provider + system.default_model.
+# The provider/model pair must exist in the providers map above, otherwise
+# Maestro fails fast on startup.
+# agents:
+#   "Maestro":
+#     provider: "openai"
+#     model: "gpt-4-turbo"
+#   "Software Engineer":
+#     provider: "anthropic"
+#     model: "claude-3-opus"
+#   "Researcher":
+#     provider: "ollama"
+#     model: "mistral"
 
 # Optional: custom provider example (add new adapters by kind + factory registration)
 # myservice:

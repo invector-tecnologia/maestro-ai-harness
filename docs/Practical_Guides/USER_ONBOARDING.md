@@ -4,22 +4,22 @@
 This flow introduces Maestro to first-time users and explains the essential commands to operate the TUI.
 
 ## Prerequisites
-- Valid config at `~/.config/maestro/config.yaml` (or `XDG_CONFIG_HOME/maestro/config.yaml`).
+- Valid config at `~/.config/maestro/config.yml` (or `XDG_CONFIG_HOME/maestro/config.yml`). A legacy `config.yaml` is still accepted with a deprecation warning.
 - Default provider reachable according to your configuration.
 
 ## How To Start
 ```bash
-maestro onboarding --mode detailed --config ~/.config/maestro/config.yaml
+maestro onboarding --mode detailed --config ~/.config/maestro/config.yml
 ```
 
 To start faster with safe defaults:
 ```bash
-maestro onboarding --mode fast --config ~/.config/maestro/config.yaml
+maestro onboarding --mode fast --config ~/.config/maestro/config.yml
 ```
 
 You can also start in normal mode and let Maestro resume saved onboarding state:
 ```bash
-maestro tui --config ~/.config/maestro/config.yaml
+maestro tui --config ~/.config/maestro/config.yml
 ```
 
 ## Flow
@@ -52,9 +52,9 @@ Note:
 - If the provider is unavailable, validate configuration and endpoint before starting project onboarding.
 - For ASCII-only rendering:
 ```bash
-MAESTRO_ASCII_ONLY=1 maestro tui --config ~/.config/maestro/config.yaml
+MAESTRO_ASCII_ONLY=1 maestro tui --config ~/.config/maestro/config.yml
 ```
 - To enable local opt-in telemetry:
 ```bash
-MAESTRO_TELEMETRY=1 maestro tui --config ~/.config/maestro/config.yaml
+MAESTRO_TELEMETRY=1 maestro tui --config ~/.config/maestro/config.yml
 ```

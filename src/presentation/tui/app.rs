@@ -45,7 +45,7 @@ impl TuiApp {
         self.logs
             .push("Edit Configurations (in text editor):".to_string());
         self.logs
-            .push("  maestro/config.yaml       - Configure providers/models".to_string());
+            .push("  maestro/config.yml       - Configure providers/models".to_string());
         self.logs
             .push("  maestro/personas/*.md     - Edit personas freely".to_string());
         self.logs
@@ -200,8 +200,10 @@ impl TuiApp {
         match action {
             ReadinessAction::CreateConfigTemplate => {
                 let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let config_path = root.join("maestro").join("config.yaml");
-                if !config_path.exists() {
+                let maestro_dir = root.join("maestro");
+                let existing = crate::application::config::existing_config_in(&maestro_dir);
+                let config_path = maestro_dir.join(crate::application::config::CONFIG_FILE_NAME);
+                if existing.is_none() {
                     if let Some(parent) = config_path.parent() {
                         let _ = fs::create_dir_all(parent);
                     }
@@ -259,11 +261,11 @@ impl TuiApp {
             }
             ReadinessAction::OpenConfigHint => {
                 self.logs
-                    .push("readiness action: open maestro/config.yaml in the editor".to_string());
+                    .push("readiness action: open maestro/config.yml in the editor".to_string());
             }
             ReadinessAction::ConfigureProviders => {
                 self.logs.push(
-                    "readiness action: add providers: and system.default_provider in maestro/config.yaml"
+                    "readiness action: add providers: and system.default_provider in maestro/config.yml"
                         .to_string(),
                 );
             }
@@ -667,13 +669,12 @@ impl TuiApp {
 
                     if !self.readiness.has_config {
                         self.logs.push(
-                            "  1. Create maestro/config.yaml (use: maestro init-config)"
-                                .to_string(),
+                            "  1. Create maestro/config.yml (use: maestro init-config)".to_string(),
                         );
                     }
                     if self.readiness.has_config && !self.readiness.has_providers {
                         self.logs.push(
-                            "  2. Define at least one provider in config.yaml under providers:"
+                            "  2. Define at least one provider in config.yml under providers:"
                                 .to_string(),
                         );
                     }

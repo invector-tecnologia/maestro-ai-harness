@@ -29,13 +29,13 @@ maestro list-agents
 ```
 3. Verify config and directories:
 ```bash
-test -f /etc/maestro/config.yaml
+test -f /etc/maestro/config.yml
 test -d /var/lib/maestro
 test -d /var/log/maestro
 ```
 4. Validate runtime doctor command:
 ```bash
-maestro doctor --config /etc/maestro/config.yaml
+maestro doctor --config /etc/maestro/config.yml
 ```
 5. Remove package:
 ```bash
