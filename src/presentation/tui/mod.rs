@@ -43,7 +43,6 @@ pub enum UIMode {
     Workspace,
     HelpMenu,
     Interview,
-    Core,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -347,14 +346,14 @@ impl TuiApp {
         self.core_picker = None;
     }
 
-    /// Enter Core (Architect's) Mode and build the directives picker from disk.
-    fn enter_core_mode(&mut self, governance: &MarkdownGovernance) {
+    /// Enter the Interview Mode directive select stage and build the picker from disk.
+    fn enter_directive_select(&mut self, governance: &MarkdownGovernance) {
         let picker = CorePicker::from_governance(governance);
         let count = picker.entries.len();
         self.core_picker = Some(picker);
-        self.mode = UIMode::Core;
+        self.mode = UIMode::Interview;
         self.logs.push(format!(
-            "\u{1f3db}\u{fe0f} Core Mode \u{2014} {count} directive(s). Up/Down navigate, Enter select, Esc back."
+            "\u{1f4cb} Directives editor \u{2014} {count} directive(s). Up/Down navigate, Enter select, Esc back."
         ));
     }
 
@@ -762,8 +761,8 @@ impl TuiApp {
             }
         }
 
-        // Handle Core (Architect's) Mode directives picker
-        if self.mode == UIMode::Core {
+        // Interview select stage: directives picker (folded former Core Mode)
+        if self.mode == UIMode::Interview && self.core_picker.is_some() {
             match key.code {
                 KeyCode::Up => {
                     if let Some(picker) = &mut self.core_picker {
@@ -787,27 +786,42 @@ impl TuiApp {
                         .core_picker
                         .as_ref()
                         .and_then(|picker| picker.selected())
-                        .map(|entry| (entry.label.clone(), entry.read_only));
-                    match selected {
+                        .map(|entry| {
+                            (
+                                entry.file_name.clone(),
+                                entry.read_only,
+                                entry.label.clone(),
+                            )
+                        });
+                    return match selected {
                         None => {
-                            self.logs
-                                .push("Core Mode: no directive available to edit.".to_string());
+                            self.logs.push(
+                                "Directives editor: no directive available to edit.".to_string(),
+                            );
+                            None
                         }
-                        Some((label, true)) => {
+                        Some((_, true, label)) => {
                             self.logs.push(format!(
                                 "🔒 {label} is the immutable Maestro directive and cannot be edited or archived."
                             ));
+                            None
                         }
-                        Some((label, false)) => {
-                            if let Some(target) = self.core_selection_target() {
+                        Some((file_name, false, label)) => match self.core_selection_target() {
+                            Some(target) => {
                                 self.logs.push(format!(
-                                    "✏️ Selected {} directive: {label}. Opening guided editor.",
+                                    "✏️ Editing {} directive: {label}",
                                     target.kind_label()
                                 ));
+                                Some(UserAction::StartDirectiveAuthoring {
+                                    target,
+                                    operation:
+                                        crate::application::interview_bot::DirectiveOperation::Edit,
+                                    file_name,
+                                })
                             }
-                        }
-                    }
-                    return None;
+                            None => None,
+                        },
+                    };
                 }
                 _ => return None,
             }
@@ -892,10 +906,10 @@ impl TuiApp {
                         }
                     }
                     None
-                } else if command == "/core" {
+                } else if command == "/core" || command == "/edit" {
                     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
                     let governance = MarkdownGovernance::new(root);
-                    self.enter_core_mode(&governance);
+                    self.enter_directive_select(&governance);
                     None
                 } else if command == "/monitor" {
                     self.return_to_workspace();
@@ -1050,6 +1064,11 @@ enum UserAction {
     CompleteWizard(WizardSubmission),
     RunReadinessAction(ReadinessAction),
     ProcessInterviewAnswer(String),
+    StartDirectiveAuthoring {
+        target: crate::application::interview_bot::DirectiveTarget,
+        operation: crate::application::interview_bot::DirectiveOperation,
+        file_name: String,
+    },
     ManageProjectDeps,
     ApproveInterviewProposals,
     RejectInterviewProposals,
@@ -1213,35 +1232,97 @@ pub async fn run_tui(
                                     continue;
                                 }
 
-                                if let Some(env) = &environment {
-                                    let _ = env
-                                        .publish(Message::new(
-                                            "user".to_string(),
-                                            answer.clone(),
-                                            None,
-                                        ))
-                                        .await;
-                                }
-
-                                if let (Some(bot), Some(session_lock)) =
-                                    (&app.interview_bot, &app.interview_session)
-                                {
-                                    let message_id = app.maestro_message_id.unwrap_or_else(Uuid::new_v4);
-                                    {
-                                        let mut session = session_lock.write().await;
-                                        bot.process_user_answer(&mut session, answer, message_id).await?;
-                                        if session.approval_pending {
-                                            app.approval_modal_visible = true;
-                                        }
-                                    }
-
-                                    if !app.approval_modal_visible {
-                                        let _ = enqueue_interview_question(&mut app, environment.as_ref()).await?;
-                                    }
+                                let is_directive = if let Some(session_lock) = &app.interview_session {
+                                    session_lock.read().await.target.is_some()
                                 } else {
-                                    app.logs.push(
-                                        "⚠️ Interview state unavailable. Restart onboarding interview.".to_string(),
-                                    );
+                                    false
+                                };
+
+                                if is_directive {
+                                    if let Some(session_lock) = &app.interview_session {
+                                        let mut session = session_lock.write().await;
+                                        if let Some(exchange) = session.exchange_history.last_mut() {
+                                            if exchange.user_answer.is_empty() {
+                                                exchange.user_answer = answer.clone();
+                                                exchange.timestamp = SystemTime::now();
+                                            }
+                                        }
+                                        session.turn_count += 1;
+                                    }
+                                    let _ = enqueue_directive_question(&mut app, environment.as_ref()).await?;
+                                } else {
+                                    if let Some(env) = &environment {
+                                        let _ = env
+                                            .publish(Message::new(
+                                                "user".to_string(),
+                                                answer.clone(),
+                                                None,
+                                            ))
+                                            .await;
+                                    }
+
+                                    if let (Some(bot), Some(session_lock)) =
+                                        (&app.interview_bot, &app.interview_session)
+                                    {
+                                        let message_id = app.maestro_message_id.unwrap_or_else(Uuid::new_v4);
+                                        {
+                                            let mut session = session_lock.write().await;
+                                            bot.process_user_answer(&mut session, answer, message_id).await?;
+                                            if session.approval_pending {
+                                                app.approval_modal_visible = true;
+                                            }
+                                        }
+
+                                        if !app.approval_modal_visible {
+                                            let _ = enqueue_interview_question(&mut app, environment.as_ref()).await?;
+                                        }
+                                    } else {
+                                        app.logs.push(
+                                            "⚠️ Interview state unavailable. Restart onboarding interview.".to_string(),
+                                        );
+                                    }
+                                }
+                            }
+                            Some(UserAction::StartDirectiveAuthoring {
+                                target,
+                                operation,
+                                file_name,
+                            }) => {
+                                let path = match &target {
+                                    crate::application::interview_bot::DirectiveTarget::Persona { .. } => {
+                                        governance.personas_dir().join(&file_name)
+                                    }
+                                    crate::application::interview_bot::DirectiveTarget::Skill {
+                                        persona,
+                                        ..
+                                    } => governance.skills_dir().join(persona).join(&file_name),
+                                    crate::application::interview_bot::DirectiveTarget::Scope { .. } => {
+                                        governance.scopes_dir().join(&file_name)
+                                    }
+                                };
+                                let existing = governance.read_document(&path).ok();
+                                match crate::application::interview_bot::InterviewSession::for_directive(
+                                    operation,
+                                    target,
+                                    Some(file_name),
+                                    existing,
+                                ) {
+                                    Ok(session) => {
+                                        app.interview_bot = Some(Arc::new(
+                                            crate::application::interview_bot::InterviewBot::new(),
+                                        ));
+                                        app.interview_session =
+                                            Some(Arc::new(tokio::sync::RwLock::new(session)));
+                                        app.core_picker = None;
+                                        app.mode = UIMode::Interview;
+                                        app.approval_modal_visible = false;
+                                        let _ = enqueue_directive_question(&mut app, environment.as_ref())
+                                            .await?;
+                                    }
+                                    Err(error) => {
+                                        app.logs
+                                            .push(format!("⚠️ Cannot author directive: {error}"));
+                                    }
                                 }
                             }
                             Some(UserAction::ManageProjectDeps) => {
@@ -1290,19 +1371,41 @@ pub async fn run_tui(
                             }
                             Some(UserAction::ApproveInterviewProposals) => {
                                 app.approval_modal_visible = false;
-                                app.logs
-                                    .push("✅ Proposals approved! Calling Product and applying scopes...".to_string());
-                                let applied = apply_interview_scope_proposals(
-                                    &mut app,
-                                    &governance,
-                                    environment.as_ref(),
-                                )
-                                .await?;
-                                app.logs.push(format!(
-                                    "✅ Product scope handoff completed. {} scope draft(s) applied.",
-                                    applied
-                                ));
-                                app.mode = UIMode::Workspace;
+
+                                let is_directive = if let Some(session_lock) = &app.interview_session {
+                                    session_lock.read().await.target.is_some()
+                                } else {
+                                    false
+                                };
+
+                                if is_directive {
+                                    match apply_directive_proposal(&mut app, &governance).await {
+                                        Ok(path) => app
+                                            .logs
+                                            .push(format!("✅ Directive saved: {}", path.display())),
+                                        Err(error) => app
+                                            .logs
+                                            .push(format!("❌ Failed to save directive: {error}")),
+                                    }
+                                    app.interview_session = None;
+                                    app.interview_bot = None;
+                                    app.maestro_message_id = None;
+                                    app.mode = UIMode::Workspace;
+                                } else {
+                                    app.logs
+                                        .push("✅ Proposals approved! Calling Product and applying scopes...".to_string());
+                                    let applied = apply_interview_scope_proposals(
+                                        &mut app,
+                                        &governance,
+                                        environment.as_ref(),
+                                    )
+                                    .await?;
+                                    app.logs.push(format!(
+                                        "✅ Product scope handoff completed. {} scope draft(s) applied.",
+                                        applied
+                                    ));
+                                    app.mode = UIMode::Workspace;
+                                }
                             }
                             Some(UserAction::RejectInterviewProposals) => {
                                 app.approval_modal_visible = false;
@@ -1355,7 +1458,24 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<
 pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
 
-    // Interview mode has special layout
+    // Interview select stage: directives picker (folded former Core Mode)
+    if app.mode == UIMode::Interview && app.core_picker.is_some() {
+        let select_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(8), // Logo
+                Constraint::Min(0),    // Directives picker
+                Constraint::Length(5), // Command input
+            ])
+            .split(area);
+
+        render_logo_panel(frame, select_rows[0]);
+        render_core_panel(frame, select_rows[1], app);
+        render_input_panel(frame, select_rows[2], app);
+        return;
+    }
+
+    // Interview author stage has special layout
     if app.mode == UIMode::Interview {
         let interview_rows = Layout::default()
             .direction(Direction::Vertical)
@@ -1372,23 +1492,6 @@ pub fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         render_monitor_panel(frame, interview_rows[2], app);
         render_input_panel(frame, interview_rows[3], app);
         render_approval_modal(frame, area, app);
-        return;
-    }
-
-    // Core (Architect's) Mode has a directives picker layout
-    if app.mode == UIMode::Core {
-        let core_rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(8), // Logo
-                Constraint::Min(0),    // Directives picker
-                Constraint::Length(5), // Command input
-            ])
-            .split(area);
-
-        render_logo_panel(frame, core_rows[0]);
-        render_core_panel(frame, core_rows[1], app);
-        render_input_panel(frame, core_rows[2], app);
         return;
     }
 
@@ -2398,6 +2501,160 @@ async fn enqueue_interview_question(
     Ok(true)
 }
 
+async fn enqueue_directive_question(
+    app: &mut TuiApp,
+    environment: Option<&Arc<Environment>>,
+) -> Result<bool> {
+    let Some(bot) = app.interview_bot.clone() else {
+        return Ok(false);
+    };
+    let Some(session_lock) = app.interview_session.clone() else {
+        return Ok(false);
+    };
+
+    let mut session = session_lock.write().await;
+    let questions: Vec<&'static str> = session
+        .target
+        .as_ref()
+        .map(|target| target.authoring_questions())
+        .unwrap_or_default();
+    let index = session.turn_count as usize;
+
+    if index >= questions.len() {
+        match bot.build_directive_proposal(&session) {
+            Ok(proposal) => {
+                session.proposed_changes = Some(proposal);
+                session.approval_pending = true;
+                drop(session);
+                app.approval_modal_visible = true;
+                app.logs
+                    .push("🧾 Draft ready. Approve (y) or reject (n).".to_string());
+            }
+            Err(error) => {
+                drop(session);
+                app.logs
+                    .push(format!("❌ Could not build directive draft: {error}"));
+            }
+        }
+        return Ok(false);
+    }
+
+    let question_text = questions[index].to_string();
+    let question_id = Uuid::new_v4();
+    session
+        .exchange_history
+        .push(crate::application::interview_bot::InterviewExchange {
+            maestro_question: question_id,
+            maestro_text: question_text.clone(),
+            user_answer: String::new(),
+            timestamp: SystemTime::now(),
+        });
+    drop(session);
+
+    app.maestro_message_id = Some(question_id);
+    app.logs.push(format!("maestro: {}", question_text));
+
+    if let Some(env) = environment {
+        let _ = env
+            .publish(Message::new("Maestro".to_string(), question_text, None))
+            .await;
+    }
+
+    Ok(true)
+}
+
+/// Persist the single directive draft produced by interview-driven authoring.
+///
+/// Personas and skills are validated and overwritten through governance; an
+/// edited scope keeps its existing sequence number and is overwritten directly
+/// (scope sequence validation only admits next-in-sequence numbers for new
+/// scopes).
+async fn apply_directive_proposal(
+    app: &mut TuiApp,
+    governance: &MarkdownGovernance,
+) -> Result<PathBuf> {
+    let session_lock = app
+        .interview_session
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("no active interview session"))?;
+
+    let (target, proposal) = {
+        let session = session_lock.read().await;
+        (session.target.clone(), session.proposed_changes.clone())
+    };
+    let target = target.ok_or_else(|| anyhow::anyhow!("no directive target"))?;
+    let proposal = proposal.ok_or_else(|| anyhow::anyhow!("no proposal to apply"))?;
+
+    let path = match &target {
+        crate::application::interview_bot::DirectiveTarget::Persona { .. } => {
+            let (file_name, content) = proposal
+                .persona_drafts
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("empty persona draft"))?;
+            persist_submission(governance, WizardSubmission::Persona { file_name, content })?
+        }
+        crate::application::interview_bot::DirectiveTarget::Skill { persona, .. } => {
+            let (file_name, content) = proposal
+                .skill_drafts
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("empty skill draft"))?;
+            persist_submission(
+                governance,
+                WizardSubmission::Skill {
+                    persona_name: persona.clone(),
+                    file_name,
+                    content,
+                },
+            )?
+        }
+        crate::application::interview_bot::DirectiveTarget::Scope { .. } => {
+            let (file_name, content) = proposal
+                .scope_drafts
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("empty scope draft"))?;
+            governance.ensure_directories()?;
+            let path = governance.scopes_dir().join(&file_name);
+            std::fs::write(&path, content)?;
+            path
+        }
+    };
+
+    // AC10 hand-off: after the Project Manager writes a scope, Maestro reads it,
+    // derives the additions each non-Maestro persona needs, audits dependencies,
+    // and surfaces the required next actions in the Workspace monitor.
+    if matches!(
+        &target,
+        crate::application::interview_bot::DirectiveTarget::Scope { .. }
+    ) {
+        if let Some(bot) = app.interview_bot.clone() {
+            let session_snapshot = { session_lock.read().await.clone() };
+            let project_deps = crate::application::project_deps::ProjectDepsConfig::load(None).ok();
+            match bot.author_scope_with_additions(&session_snapshot, project_deps.as_ref()) {
+                Ok(plan) => {
+                    app.logs.push(format!(
+                        "🧭 Maestro hand-off — {} next action(s) for the Workspace monitor:",
+                        plan.next_actions.len()
+                    ));
+                    for action in plan.next_actions {
+                        app.logs.push(format!("  → {action}"));
+                    }
+                }
+                Err(error) => {
+                    app.logs
+                        .push(format!("⚠️ Maestro hand-off skipped: {error}"));
+                }
+            }
+        }
+    }
+
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    app.readiness = crate::application::readiness::run_checks(&root);
+    Ok(path)
+}
+
 fn extract_scope_slug(file_name: &str) -> String {
     let stem = file_name.trim_end_matches(".md");
     let parts = stem.splitn(2, '-').collect::<Vec<_>>();
@@ -3154,6 +3411,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn directive_authoring_overwrites_existing_persona() {
+        let root = temp_root("maestro-directive-apply-persona");
+        let governance = MarkdownGovernance::new(&root);
+        governance.ensure_directories().expect("dirs");
+
+        let persona_path = governance.personas_dir().join("project-manager.md");
+        fs::write(
+            &persona_path,
+            "# Project Manager\n\n## Responsibilities\nold\n## Deliverables\nold\n## Operational Instructions\nold\n## Interaction Matrix\nold\n## Boundaries\nold\n",
+        )
+        .expect("seed persona");
+
+        let bot = crate::application::interview_bot::InterviewBot::new();
+        let mut session = crate::application::interview_bot::InterviewSession::for_directive(
+            crate::application::interview_bot::DirectiveOperation::Edit,
+            crate::application::interview_bot::DirectiveTarget::Persona {
+                name: "Project Manager".to_string(),
+            },
+            Some("project-manager.md".to_string()),
+            None,
+        )
+        .expect("session");
+        session.exchange_history = vec![crate::application::interview_bot::InterviewExchange {
+            maestro_question: Uuid::new_v4(),
+            maestro_text: "q".to_string(),
+            user_answer: "Coordinate delivery across teams".to_string(),
+            timestamp: SystemTime::now(),
+        }];
+        let proposal = bot.build_directive_proposal(&session).expect("proposal");
+        session.proposed_changes = Some(proposal);
+
+        let mut app = TuiApp {
+            mode: UIMode::Interview,
+            interview_session: Some(Arc::new(tokio::sync::RwLock::new(session))),
+            ..TuiApp::default()
+        };
+
+        let path = apply_directive_proposal(&mut app, &governance)
+            .await
+            .expect("apply");
+        assert_eq!(path, persona_path);
+
+        let written = fs::read_to_string(&persona_path).expect("read persona");
+        assert!(written.contains("Coordinate delivery across teams"));
+        assert!(!written.contains("## Responsibilities\nold"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn directive_authoring_scope_surfaces_maestro_handoff() {
+        let root = temp_root("maestro-directive-scope-handoff");
+        let governance = MarkdownGovernance::new(&root);
+        governance.ensure_directories().expect("dirs");
+
+        let bot = crate::application::interview_bot::InterviewBot::new();
+        let mut session = crate::application::interview_bot::InterviewSession::for_directive(
+            crate::application::interview_bot::DirectiveOperation::Create,
+            crate::application::interview_bot::DirectiveTarget::Scope {
+                name: "Checkout API".to_string(),
+            },
+            Some("001-checkout-api.md".to_string()),
+            None,
+        )
+        .expect("session");
+        session.exchange_history = vec![crate::application::interview_bot::InterviewExchange {
+            maestro_question: Uuid::new_v4(),
+            maestro_text: "q".to_string(),
+            user_answer: "Ship the checkout API and validate acceptance tests".to_string(),
+            timestamp: SystemTime::now(),
+        }];
+        let proposal = bot.build_directive_proposal(&session).expect("proposal");
+        session.proposed_changes = Some(proposal);
+
+        let mut app = TuiApp {
+            mode: UIMode::Interview,
+            interview_bot: Some(Arc::new(bot)),
+            interview_session: Some(Arc::new(tokio::sync::RwLock::new(session))),
+            ..TuiApp::default()
+        };
+
+        let path = apply_directive_proposal(&mut app, &governance)
+            .await
+            .expect("apply scope");
+        assert_eq!(path, governance.scopes_dir().join("001-checkout-api.md"));
+
+        assert!(app
+            .logs
+            .iter()
+            .any(|line| line.contains("Maestro hand-off")));
+        assert!(app
+            .logs
+            .iter()
+            .any(|line| line.contains("Project Manager authored scope")));
+        assert!(app
+            .logs
+            .iter()
+            .any(|line| line.contains("Open Workspace monitor")));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn rejection_writes_nothing_and_keeps_interview_active() {
         let root = temp_root("maestro-interview-reject-no-write");
         let created = fs::create_dir_all(&root);
@@ -3376,7 +3736,7 @@ mod tests {
 
         let mut app = TuiApp {
             core_picker: Some(CorePicker::from_governance(&governance)),
-            mode: UIMode::Core,
+            mode: UIMode::Interview,
             ..TuiApp::default()
         };
 
@@ -3409,8 +3769,8 @@ mod tests {
         seed_core_directives(&governance);
 
         let mut app = TuiApp::default();
-        app.enter_core_mode(&governance);
-        assert_eq!(app.mode, UIMode::Core);
+        app.enter_directive_select(&governance);
+        assert_eq!(app.mode, UIMode::Interview);
         assert!(app.core_picker.is_some());
 
         app.return_to_workspace();
