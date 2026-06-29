@@ -152,7 +152,7 @@ providers:
 3. **VALIDATE** — `maestro validate-config` checks configuration integrity and dependency health.
 4. **LAUNCH** — `maestro tui` fires up your interactive command deck.
 5. **ARCHITECT** — Inside TUI, execute `/new scope`, `/new persona`, `/new skill` to map execution domains and AI profiles, or `/edit` to open the directive governance home (Create/Edit/Update/Delete). Return to the monitor with `/monitor`.
-6. **EXECUTE** — `maestro run` triggers automated work cycles. In Workspace Mode the Maestro agent orchestrates agents sequentially with live narration and a heartbeat while long-running agents work. Monitor logs. Watch your AI team synthesize.
+6. **EXECUTE** — `maestro run` triggers automated work cycles. In Workspace Mode the Maestro agent orchestrates the demand end to end — plan, delegate to each persona, audit every contribution, then deliver a synthesized result — with live narration and a heartbeat while long-running agents work. Monitor logs. Watch your AI team synthesize.
 
 ### ⚡ Utility Commands
 

@@ -24,7 +24,6 @@ struct PersonaRoleState {
     should_respond: bool,
     observed_message: Option<Message>,
     generated_content: Option<String>,
-    handoff_index: usize,
 }
 
 pub struct PersonaRuntimeRole {
@@ -125,22 +124,13 @@ impl Role for PersonaRuntimeRole {
             .clone()
             .unwrap_or_else(|| "No analysis available".to_string());
 
-        let interaction = &self.persona.interaction_matrix
-            [state.handoff_index % self.persona.interaction_matrix.len()];
-
-        state.handoff_index = state.handoff_index.saturating_add(1);
         state.should_respond = false;
         state.observed_message = None;
         state.generated_content = None;
 
-        let content = format!(
-            "{} | Handoff to {}: {}",
-            generated, interaction.target_persona, interaction.expected_handoff
-        );
-
         Ok(Some(Message::new(
             self.persona.name.clone(),
-            content,
+            generated,
             Some(observed.id()),
         )))
     }

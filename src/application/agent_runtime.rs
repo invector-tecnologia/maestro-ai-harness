@@ -28,7 +28,7 @@ pub struct AgentRegistration {
     pub role: Arc<dyn Role>,
 }
 
-/// Per-agent result of a sequential Maestro-orchestrated workflow run.
+/// Per-agent result of a single observe→think→act cycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequentialAgentOutcome {
     pub agent_name: String,
@@ -38,29 +38,64 @@ pub struct SequentialAgentOutcome {
     pub error: Option<String>,
 }
 
-/// Aggregate report for a sequential workflow run.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SequentialRunReport {
-    pub outcomes: Vec<SequentialAgentOutcome>,
+/// Maestro's audit verdict for a single worker contribution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditVerdict {
+    Approved,
+    Rejected { reason: String },
 }
 
-impl SequentialRunReport {
-    /// Agent execution order (as orchestrated).
+impl AuditVerdict {
+    pub fn is_approved(&self) -> bool {
+        matches!(self, AuditVerdict::Approved)
+    }
+}
+
+/// Outcome of delegating the user demand to a single worker persona, including
+/// Maestro's audit of the returned contribution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaestroDelegation {
+    pub worker_name: String,
+    pub mandate: String,
+    pub succeeded: bool,
+    pub heartbeats: u32,
+    pub output: Option<String>,
+    pub error: Option<String>,
+    pub audit: AuditVerdict,
+}
+
+/// Aggregate report of a Maestro-orchestrated workflow: the planning brief, the
+/// per-worker delegations with audit verdicts, and the synthesized delivery.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MaestroOrchestrationReport {
+    pub brief: Option<String>,
+    pub delegations: Vec<MaestroDelegation>,
+    pub final_delivery: String,
+}
+
+impl MaestroOrchestrationReport {
+    /// Worker delegation order (as orchestrated).
     pub fn order(&self) -> Vec<String> {
-        self.outcomes
+        self.delegations
             .iter()
-            .map(|outcome| outcome.agent_name.clone())
+            .map(|delegation| delegation.worker_name.clone())
             .collect()
     }
 
-    /// Count of agents that completed their cycle successfully.
-    pub fn completed(&self) -> usize {
-        self.outcomes.iter().filter(|o| o.succeeded).count()
+    /// Count of worker contributions Maestro audited as approved.
+    pub fn approved(&self) -> usize {
+        self.delegations
+            .iter()
+            .filter(|delegation| delegation.audit.is_approved())
+            .count()
     }
 
-    /// Count of agents whose cycle failed (isolated, workflow continued).
-    pub fn failed(&self) -> usize {
-        self.outcomes.iter().filter(|o| !o.succeeded).count()
+    /// Count of worker contributions Maestro audited as rejected (isolated).
+    pub fn rejected(&self) -> usize {
+        self.delegations
+            .iter()
+            .filter(|delegation| !delegation.audit.is_approved())
+            .count()
     }
 }
 
@@ -221,53 +256,94 @@ impl AgentRuntime {
     /// heartbeat at least every `heartbeat_period` while an agent runs longer
     /// than that threshold. Per-agent failures are isolated: a failed agent is
     /// recorded and the workflow continues with the next agent.
-    pub async fn orchestrate_sequential(
+    /// Orchestrate a user demand as Maestro: plan a brief, delegate the demand
+    /// to each worker persona, audit every contribution, then synthesize a final
+    /// delivery. Workers run serially; a failing worker is isolated and audited
+    /// `Rejected` while the workflow continues.
+    pub async fn orchestrate_as_maestro(
         &self,
-        pipeline: Vec<AgentRegistration>,
+        maestro: AgentRegistration,
+        workers: Vec<AgentRegistration>,
         trigger: Message,
         heartbeat_period: std::time::Duration,
-    ) -> SequentialRunReport {
+    ) -> MaestroOrchestrationReport {
         let event_tx = self.event_tx.clone();
         let history = Arc::clone(&self.event_history);
         let environment = Arc::clone(&self.environment);
         let health = Arc::clone(&self.health);
 
-        let order: Vec<String> = pipeline.iter().map(|reg| reg.name.clone()).collect();
+        let worker_order: Vec<String> = workers.iter().map(|reg| reg.name.clone()).collect();
+
+        // PLAN: Maestro reasons over the demand to produce an orchestration brief.
         record_event(
             &event_tx,
             &history,
             RuntimeEvent::MaestroNarration {
-                agent_name: "Maestro".to_string(),
-                phase: "workflow-start".to_string(),
+                agent_name: maestro.name.clone(),
+                phase: "plan".to_string(),
                 detail: format!(
-                    "orchestrating {} agent(s): {}",
-                    order.len(),
-                    order.join(" → ")
+                    "planning delegation of {} worker(s): {}",
+                    worker_order.len(),
+                    worker_order.join(", ")
                 ),
             },
         )
         .await;
 
-        let mut report = SequentialRunReport::default();
-        let mut current_input = trigger;
+        let plan_outcome = run_sequential_cycle(
+            &maestro.name,
+            maestro.role.as_ref(),
+            &trigger,
+            &environment,
+            &health,
+            &event_tx,
+            &history,
+            heartbeat_period,
+        )
+        .await;
+        let brief = plan_outcome.output.clone();
 
-        for registration in pipeline {
-            let name = registration.name.clone();
+        let mut report = MaestroOrchestrationReport {
+            brief: brief.clone(),
+            ..Default::default()
+        };
+
+        // DELEGATE + AUDIT: fan the demand out to each worker, then audit it.
+        for worker in workers {
+            let mandate = format!(
+                "Deliver your {} contribution to the user demand",
+                worker.name
+            );
             record_event(
                 &event_tx,
                 &history,
                 RuntimeEvent::MaestroNarration {
-                    agent_name: "Maestro".to_string(),
-                    phase: "agent-start".to_string(),
-                    detail: format!("starting {name}"),
+                    agent_name: maestro.name.clone(),
+                    phase: "delegate".to_string(),
+                    detail: format!("delegating to {}", worker.name),
                 },
             )
             .await;
 
+            // Each worker receives the original demand (fan-out), framed by the
+            // planning brief when available. The demand origin is preserved as
+            // the sender so the worker engages its responder cycle.
+            let delegated_content = match &brief {
+                Some(brief) if !brief.trim().is_empty() => {
+                    format!("{}\n\nMaestro brief: {}", trigger.content(), brief)
+                }
+                _ => trigger.content().to_string(),
+            };
+            let delegated = Message::new(
+                trigger.sender().to_string(),
+                delegated_content,
+                Some(trigger.id()),
+            );
+
             let outcome = run_sequential_cycle(
-                &name,
-                registration.role.as_ref(),
-                &current_input,
+                &worker.name,
+                worker.role.as_ref(),
+                &delegated,
                 &environment,
                 &health,
                 &event_tx,
@@ -276,50 +352,57 @@ impl AgentRuntime {
             )
             .await;
 
-            if let Some(output) = &outcome.output {
-                current_input =
-                    Message::new(name.clone(), output.clone(), Some(current_input.id()));
-            }
-
+            let audit = audit_contribution(&outcome);
             record_event(
                 &event_tx,
                 &history,
                 RuntimeEvent::MaestroNarration {
-                    agent_name: "Maestro".to_string(),
-                    phase: if outcome.succeeded {
-                        "agent-complete".to_string()
-                    } else {
-                        "agent-failed".to_string()
-                    },
-                    detail: format!(
-                        "{name} {}",
-                        if outcome.succeeded {
-                            "completed"
-                        } else {
-                            "failed (isolated)"
+                    agent_name: maestro.name.clone(),
+                    phase: "audit".to_string(),
+                    detail: match &audit {
+                        AuditVerdict::Approved => format!("{} approved", worker.name),
+                        AuditVerdict::Rejected { reason } => {
+                            format!("{} rejected: {reason}", worker.name)
                         }
-                    ),
+                    },
                 },
             )
             .await;
 
-            report.outcomes.push(outcome);
+            report.delegations.push(MaestroDelegation {
+                worker_name: worker.name.clone(),
+                mandate,
+                succeeded: outcome.succeeded,
+                heartbeats: outcome.heartbeats,
+                output: outcome.output,
+                error: outcome.error,
+                audit,
+            });
         }
 
+        // DELIVER: synthesize the approved contributions into a final deliverable.
+        let final_delivery = synthesize_delivery(brief.as_deref(), &report.delegations);
+        report.final_delivery = final_delivery.clone();
         record_event(
             &event_tx,
             &history,
             RuntimeEvent::MaestroNarration {
-                agent_name: "Maestro".to_string(),
-                phase: "workflow-complete".to_string(),
+                agent_name: maestro.name.clone(),
+                phase: "deliver".to_string(),
                 detail: format!(
-                    "{} completed, {} failed",
-                    report.completed(),
-                    report.failed()
+                    "delivered synthesis from {} approved / {} rejected contribution(s)",
+                    report.approved(),
+                    report.rejected()
                 ),
             },
         )
         .await;
+
+        let delivery_message =
+            Message::new(maestro.name.clone(), final_delivery, Some(trigger.id()));
+        if let Err(EnvironmentError::NoSubscribers) = environment.publish(delivery_message).await {
+            debug!("maestro delivery dropped: no subscribers");
+        }
 
         report
     }
@@ -340,19 +423,105 @@ impl AgentRuntime {
         !self.sequential_pipeline.read().await.is_empty()
     }
 
-    /// Orchestrate the stored sequential pipeline for a single user prompt.
-    /// Single-flight: concurrent invocations are serialized so role state is
-    /// never shared across interleaved workflows.
+    /// Orchestrate the stored pipeline for a single user prompt as a Maestro-led
+    /// workflow. Single-flight: concurrent invocations are serialized so role
+    /// state is never shared across interleaved workflows.
     pub async fn orchestrate_user_message(
         &self,
         trigger: Message,
         heartbeat_period: std::time::Duration,
-    ) -> SequentialRunReport {
+    ) -> MaestroOrchestrationReport {
         let _guard = self.orchestration_lock.lock().await;
         let pipeline = self.sequential_pipeline.read().await.clone();
-        self.orchestrate_sequential(pipeline, trigger, heartbeat_period)
+        let (maestro, workers) = split_orchestrator(pipeline);
+        let Some(maestro) = maestro else {
+            return MaestroOrchestrationReport::default();
+        };
+        self.orchestrate_as_maestro(maestro, workers, trigger, heartbeat_period)
             .await
     }
+}
+
+/// Split a stored pipeline into the leading orchestrator and the worker
+/// personas. The runtime stays persona-agnostic: the first registration leads
+/// (governance always seeds the immutable Maestro at index 0).
+fn split_orchestrator(
+    mut pipeline: Vec<AgentRegistration>,
+) -> (Option<AgentRegistration>, Vec<AgentRegistration>) {
+    if pipeline.is_empty() {
+        return (None, Vec::new());
+    }
+    let maestro = pipeline.remove(0);
+    (Some(maestro), pipeline)
+}
+
+/// Maestro's deterministic audit of a single worker contribution.
+fn audit_contribution(outcome: &SequentialAgentOutcome) -> AuditVerdict {
+    if !outcome.succeeded {
+        return AuditVerdict::Rejected {
+            reason: outcome
+                .error
+                .clone()
+                .unwrap_or_else(|| "worker cycle failed".to_string()),
+        };
+    }
+    match &outcome.output {
+        Some(output) if !output.trim().is_empty() => AuditVerdict::Approved,
+        _ => AuditVerdict::Rejected {
+            reason: "no contribution produced".to_string(),
+        },
+    }
+}
+
+/// Synthesize the approved worker contributions and audit trail into a final
+/// deliverable that Maestro hands back for the user demand.
+fn synthesize_delivery(brief: Option<&str>, delegations: &[MaestroDelegation]) -> String {
+    let mut sections = vec!["# Maestro Delivery".to_string()];
+
+    if let Some(brief) = brief {
+        if !brief.trim().is_empty() {
+            sections.push(format!("## Plan\n{brief}"));
+        }
+    }
+
+    let contributions: Vec<String> = delegations
+        .iter()
+        .filter(|delegation| delegation.audit.is_approved())
+        .filter_map(|delegation| {
+            delegation
+                .output
+                .as_ref()
+                .map(|output| format!("### {}\n{}", delegation.worker_name, output))
+        })
+        .collect();
+
+    if contributions.is_empty() {
+        sections.push("## Contributions\nNo approved contributions were produced.".to_string());
+    } else {
+        sections.push(format!("## Contributions\n{}", contributions.join("\n\n")));
+    }
+
+    let approved = delegations
+        .iter()
+        .filter(|delegation| delegation.audit.is_approved())
+        .count();
+    let rejected = delegations.len().saturating_sub(approved);
+    let audit_lines: Vec<String> = delegations
+        .iter()
+        .map(|delegation| {
+            let verdict = match &delegation.audit {
+                AuditVerdict::Approved => "approved".to_string(),
+                AuditVerdict::Rejected { reason } => format!("rejected ({reason})"),
+            };
+            format!("- {}: {}", delegation.worker_name, verdict)
+        })
+        .collect();
+    sections.push(format!(
+        "## Audit Trail ({approved} approved, {rejected} rejected)\n{}",
+        audit_lines.join("\n")
+    ));
+
+    sections.join("\n\n")
 }
 
 async fn run_agent_loop(
@@ -939,70 +1108,77 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sequential_workflow_runs_agents_in_registration_order() {
+    async fn maestro_orchestration_delegates_audits_and_delivers() {
         let environment = Arc::new(Environment::new(32));
         let runtime = AgentRuntime::new(Arc::clone(&environment));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        let pipeline = vec![
+        let maestro = sequential_registration("Maestro", &log, Duration::ZERO, false);
+        let workers = vec![
             sequential_registration("alpha", &log, Duration::ZERO, false),
             sequential_registration("beta", &log, Duration::ZERO, false),
-            sequential_registration("gamma", &log, Duration::ZERO, false),
         ];
 
         let report = runtime
-            .orchestrate_sequential(
-                pipeline,
+            .orchestrate_as_maestro(
+                maestro,
+                workers,
                 Message::new("user".to_string(), "go".to_string(), None),
                 Duration::from_secs(5),
             )
             .await;
 
-        assert_eq!(report.order(), vec!["alpha", "beta", "gamma"]);
-        assert_eq!(report.completed(), 3);
-        assert_eq!(report.failed(), 0);
+        assert_eq!(report.order(), vec!["alpha", "beta"]);
+        assert_eq!(report.approved(), 2);
+        assert_eq!(report.rejected(), 0);
+        assert_eq!(report.brief.as_deref(), Some("Maestro output"));
+        assert!(report.final_delivery.contains("alpha output"));
+        assert!(report.final_delivery.contains("beta output"));
+        // Maestro plans first, then each worker is delegated to in order.
         assert_eq!(
             log.lock().expect("order log poisoned").clone(),
-            vec!["alpha", "beta", "gamma"]
+            vec!["Maestro", "alpha", "beta"]
         );
     }
 
     #[tokio::test]
-    async fn sequential_workflow_isolates_agent_failure() {
+    async fn maestro_orchestration_isolates_and_rejects_failing_worker() {
         let environment = Arc::new(Environment::new(32));
         let runtime = AgentRuntime::new(Arc::clone(&environment));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        let pipeline = vec![
+        let maestro = sequential_registration("Maestro", &log, Duration::ZERO, false);
+        let workers = vec![
             sequential_registration("alpha", &log, Duration::ZERO, false),
             sequential_registration("beta", &log, Duration::ZERO, true),
             sequential_registration("gamma", &log, Duration::ZERO, false),
         ];
 
         let report = runtime
-            .orchestrate_sequential(
-                pipeline,
+            .orchestrate_as_maestro(
+                maestro,
+                workers,
                 Message::new("user".to_string(), "go".to_string(), None),
                 Duration::from_secs(5),
             )
             .await;
 
         assert_eq!(report.order(), vec!["alpha", "beta", "gamma"]);
-        assert_eq!(report.completed(), 2);
-        assert_eq!(report.failed(), 1);
+        assert_eq!(report.approved(), 2);
+        assert_eq!(report.rejected(), 1);
 
         let beta = report
-            .outcomes
+            .delegations
             .iter()
-            .find(|outcome| outcome.agent_name == "beta")
-            .expect("beta outcome present");
+            .find(|delegation| delegation.worker_name == "beta")
+            .expect("beta delegation present");
         assert!(!beta.succeeded);
-        assert!(beta.error.is_some());
+        assert!(matches!(beta.audit, AuditVerdict::Rejected { .. }));
 
-        // The failing agent never reached act(); later agents still executed.
+        // The failing worker never reached act(); later workers still executed.
         assert_eq!(
             log.lock().expect("order log poisoned").clone(),
-            vec!["alpha", "gamma"]
+            vec!["Maestro", "alpha", "gamma"]
         );
 
         let health = runtime.health_snapshot().await;
@@ -1011,12 +1187,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sequential_workflow_emits_heartbeat_for_slow_agent() {
+    async fn maestro_orchestration_emits_heartbeat_for_slow_worker() {
         let environment = Arc::new(Environment::new(32));
         let runtime = AgentRuntime::new(Arc::clone(&environment));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        let pipeline = vec![sequential_registration(
+        let maestro = sequential_registration("Maestro", &log, Duration::ZERO, false);
+        let workers = vec![sequential_registration(
             "slowpoke",
             &log,
             Duration::from_millis(80),
@@ -1024,19 +1201,23 @@ mod tests {
         )];
 
         let report = runtime
-            .orchestrate_sequential(
-                pipeline,
+            .orchestrate_as_maestro(
+                maestro,
+                workers,
                 Message::new("user".to_string(), "go".to_string(), None),
                 Duration::from_millis(20),
             )
             .await;
 
-        let outcome = report.outcomes.first().expect("slowpoke outcome present");
-        assert!(outcome.succeeded);
+        let slow = report
+            .delegations
+            .first()
+            .expect("slowpoke delegation present");
+        assert!(slow.succeeded);
         assert!(
-            outcome.heartbeats >= 1,
+            slow.heartbeats >= 1,
             "expected at least one heartbeat, got {}",
-            outcome.heartbeats
+            slow.heartbeats
         );
 
         let events = runtime.events_snapshot().await;
@@ -1050,19 +1231,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sequential_workflow_narrates_each_transition() {
+    async fn maestro_orchestration_narrates_plan_delegate_audit_deliver() {
         let environment = Arc::new(Environment::new(32));
         let runtime = AgentRuntime::new(Arc::clone(&environment));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        let pipeline = vec![
+        let maestro = sequential_registration("Maestro", &log, Duration::ZERO, false);
+        let workers = vec![
             sequential_registration("alpha", &log, Duration::ZERO, false),
             sequential_registration("beta", &log, Duration::ZERO, false),
         ];
 
         let _report = runtime
-            .orchestrate_sequential(
-                pipeline,
+            .orchestrate_as_maestro(
+                maestro,
+                workers,
                 Message::new("user".to_string(), "go".to_string(), None),
                 Duration::from_secs(5),
             )
@@ -1077,22 +1260,22 @@ mod tests {
             })
             .collect();
 
-        assert!(phases.contains(&"workflow-start".to_string()));
+        assert!(phases.contains(&"plan".to_string()));
         assert_eq!(
             phases
                 .iter()
-                .filter(|phase| phase.as_str() == "agent-start")
+                .filter(|phase| phase.as_str() == "delegate")
                 .count(),
             2
         );
         assert_eq!(
             phases
                 .iter()
-                .filter(|phase| phase.as_str() == "agent-complete")
+                .filter(|phase| phase.as_str() == "audit")
                 .count(),
             2
         );
-        assert!(phases.contains(&"workflow-complete".to_string()));
+        assert!(phases.contains(&"deliver".to_string()));
     }
 
     #[tokio::test]
@@ -1124,6 +1307,7 @@ mod tests {
 
         runtime
             .set_sequential_pipeline(vec![
+                sequential_registration("Maestro", &log, Duration::ZERO, false),
                 sequential_registration("alpha", &log, Duration::ZERO, false),
                 sequential_registration("beta", &log, Duration::ZERO, false),
             ])
@@ -1136,11 +1320,12 @@ mod tests {
             )
             .await;
 
+        // The leading registration orchestrates; the rest are delegated workers.
         assert_eq!(report.order(), vec!["alpha", "beta"]);
-        assert_eq!(report.completed(), 2);
+        assert_eq!(report.approved(), 2);
         assert_eq!(
             log.lock().expect("order log poisoned").clone(),
-            vec!["alpha", "beta"]
+            vec!["Maestro", "alpha", "beta"]
         );
     }
 
@@ -1187,6 +1372,14 @@ mod tests {
         runtime
             .set_sequential_pipeline(vec![
                 AgentRegistration {
+                    name: "Maestro".to_string(),
+                    role: Arc::new(ConcurrencyRole {
+                        name: "Maestro".to_string(),
+                        active: Arc::clone(&active),
+                        max_active: Arc::clone(&max_active),
+                    }),
+                },
+                AgentRegistration {
                     name: "alpha".to_string(),
                     role: Arc::new(ConcurrencyRole {
                         name: "alpha".to_string(),
@@ -1227,8 +1420,8 @@ mod tests {
         let report_one = run_one.await.expect("first orchestration joined");
         let report_two = run_two.await.expect("second orchestration joined");
 
-        assert_eq!(report_one.completed(), 2);
-        assert_eq!(report_two.completed(), 2);
+        assert_eq!(report_one.delegations.len(), 2);
+        assert_eq!(report_two.delegations.len(), 2);
         assert_eq!(
             max_active.load(Ordering::SeqCst),
             1,
