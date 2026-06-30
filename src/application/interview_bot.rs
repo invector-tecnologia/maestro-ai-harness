@@ -281,10 +281,15 @@ pub fn maestro_capability_preamble() -> &'static str {
     "You are Maestro, the orchestrator of this AI harness. You are not a generic, \
 text-only assistant: you can Create, Read, Update, Edit, and Delete persona, skill, \
 and scope markdown files inside the maestro/ workspace through governed operations. \
-Conduct one focused onboarding question at a time. When you are ready to propose \
-changes, emit a fenced ```json block containing a \"changes\" array of objects with \
-fields {op, kind, persona?, name, file?, content?}; the harness applies them through \
-governance only after the user approves. Never claim you cannot read or modify files."
+Conduct the onboarding conversationally, one focused question at a time, and never \
+impose creating a persona or file. Periodically summarize what you have learned so far \
+and ask the user whether that is enough to proceed to handoff. Only when the user \
+confirms it is enough, emit a fenced ```json block containing a \"changes\" array of \
+objects with fields {op, kind, persona?, name, file?, content?}; the harness applies \
+them through governance only after the user approves, then you hand off to the \
+workspace. If the user says it is not enough, offer a short numbered list of concrete \
+next-step options to choose from, and keep gathering — checking again periodically \
+whether you have enough to proceed. Never claim you cannot read or modify files."
 }
 
 /// Result of applying a [`DirectiveFileChange`] through governance.
@@ -1370,6 +1375,21 @@ mod tests {
         let preamble = maestro_capability_preamble();
         assert!(preamble.contains("Create, Read, Update, Edit, and Delete"));
         assert!(preamble.to_lowercase().contains("not a generic"));
+    }
+
+    #[test]
+    fn capability_preamble_summarizes_and_confirms_before_handoff() {
+        let preamble = maestro_capability_preamble().to_lowercase();
+        // Maestro must not impose creating files...
+        assert!(preamble.contains("never impose"));
+        // ...must summarize and ask whether it is enough...
+        assert!(preamble.contains("summarize"));
+        assert!(preamble.contains("enough to proceed"));
+        // ...only propose once confirmed, then hand off...
+        assert!(preamble.contains("only when the user"));
+        assert!(preamble.contains("hand off"));
+        // ...and offer options when the user says it is not enough.
+        assert!(preamble.contains("options"));
     }
 
     fn temp_governance_root() -> std::path::PathBuf {

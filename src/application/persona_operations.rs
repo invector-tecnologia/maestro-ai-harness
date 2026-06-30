@@ -200,7 +200,7 @@ impl MaestroInterviewRole {
             format!("\n\nConversation so far:\n{}", transcript.join("\n"))
         };
         format!(
-            "{}\n\nPersona: {}\nPurpose: {}\nResponsibilities: {}{}\n\nUser said: {}\n\nRespond as Maestro with your next onboarding message: either one focused question, or a short confirmation followed by a fenced json proposal of the files to create.",
+            "{}\n\nPersona: {}\nPurpose: {}\nResponsibilities: {}{}\n\nUser said: {}\n\nRespond as Maestro with your next onboarding message. Do not impose creating a persona or file. If you have gathered meaningful context, summarize what you know so far and ask whether it is enough to proceed to handoff. Only if the user has already confirmed it is enough, emit a short confirmation followed by a fenced json proposal of the files to create. If the user said it is not enough, offer a short numbered list of next-step options to choose from. Otherwise, ask one focused question.",
             crate::application::interview_bot::maestro_capability_preamble(),
             self.persona.name,
             self.persona.purpose,
