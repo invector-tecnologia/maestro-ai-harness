@@ -366,9 +366,12 @@ pub(super) async fn run_maestro_wakeup_check(
     }
 
     let wakeup_prompt = "Let's begin onboarding. Briefly greet me, then ask your first \
-focused question to understand the project I want to build. Ask one question at a time. \
-As you learn, periodically summarize what you've gathered and ask whether it is enough \
-to proceed to handoff — only propose the persona, skill, and scope files once I confirm."
+focused question to understand the project idea I want to build. Ask one question at a \
+time, and reply with only that single message. The default team (Project Manager, User \
+Experience, Quality Assurance, Software Engineer) already exists, so don't ask me to \
+create a persona. As you learn, periodically summarize what you've gathered and ask \
+whether it is enough to proceed to handoff — only propose the project scope and the \
+skills each default persona needs once I confirm."
         .to_string();
     let probe = Message::new("user".to_string(), wakeup_prompt, None);
     app.maestro_message_id = Some(probe.id());
