@@ -461,23 +461,72 @@ fn render_agents_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: 
     frame.render_widget(table, area);
 }
 
-fn render_monitor_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
-    let items = app
-        .logs
-        .iter()
-        .rev()
-        .take(20)
-        .rev()
-        .map(|line| ListItem::new(line.clone()))
-        .collect::<Vec<_>>();
+/// Hard-wrap a logical line to `width` columns (character based) so the
+/// Orchestration panel can bottom-anchor and scroll over an accurate row count.
+fn wrap_log_line(line: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![line.to_string()];
+    }
+    let chars: Vec<char> = line.chars().collect();
+    if chars.len() <= width {
+        return vec![line.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + width).min(chars.len());
+        out.push(chars[start..end].iter().collect());
+        start = end;
+    }
+    out
+}
 
-    let list = List::new(items).block(
+fn render_monitor_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let inner_height = area.height.saturating_sub(2) as usize;
+
+    // Flatten log entries into display rows, wrapping long Maestro lines so the
+    // newest content is always reachable and scrolling stays row-accurate.
+    let mut rows: Vec<String> = Vec::new();
+    for entry in &app.logs {
+        for logical in entry.split('\n') {
+            if logical.is_empty() {
+                rows.push(String::new());
+            } else {
+                rows.extend(wrap_log_line(logical, inner_width.max(1)));
+            }
+        }
+    }
+
+    let total = rows.len();
+    let max_scroll = total.saturating_sub(inner_height);
+    app.orchestration_max_scroll.set(max_scroll);
+    let scroll = app.orchestration_scroll.min(max_scroll);
+
+    // Bottom-anchored window: scroll == 0 follows the latest line (auto-scroll),
+    // larger offsets walk back through history.
+    let end = total.saturating_sub(scroll);
+    let start = end.saturating_sub(inner_height);
+    let visible = if total == 0 {
+        String::new()
+    } else {
+        rows[start..end].join("\n")
+    };
+
+    let mut title = "② Orchestration".to_string();
+    if scroll > 0 {
+        title.push_str(&format!(" ↑{scroll} (End=latest)"));
+    } else if max_scroll > 0 {
+        title.push_str(" (↑ scroll)");
+    }
+
+    let paragraph = Paragraph::new(visible).block(
         Block::default()
-            .title("② Orchestration")
+            .title(title)
             .borders(Borders::ALL)
             .border_style(panel_border_style(app.focus == PanelFocus::Orchestration)),
     );
-    frame.render_widget(list, area);
+    frame.render_widget(paragraph, area);
 }
 
 fn render_input_panel(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &TuiApp) {

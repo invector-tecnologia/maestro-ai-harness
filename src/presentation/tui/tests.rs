@@ -73,6 +73,8 @@ fn renders_agents_monitor_and_input_panels() {
         last_runtime_event_count: 0,
         thinking_since: None,
         architect_picker: None,
+        orchestration_scroll: 0,
+        orchestration_max_scroll: std::cell::Cell::new(0),
     };
 
     let drawn = terminal.draw(|frame| render(frame, &app));
@@ -1094,6 +1096,61 @@ fn thinking_since_tracks_maestro_think_state() {
     assert!(
         app.thinking_since.is_none(),
         "thinking_since clears once Maestro stops thinking"
+    );
+}
+
+#[test]
+fn orchestration_panel_auto_follows_newest_and_scrolls_history() {
+    let backend = TestBackend::new(80, 30);
+    let mut terminal = match Terminal::new(backend) {
+        Ok(value) => value,
+        Err(_) => panic!("terminal init failed"),
+    };
+
+    let mut app = TuiApp {
+        mode: UIMode::Workspace,
+        focus: PanelFocus::Orchestration,
+        ..TuiApp::default()
+    };
+    for i in 0..40 {
+        app.logs.push(format!("line-{i:02}"));
+    }
+
+    // Auto-follow: the newest line is on screen, the oldest is clipped.
+    let drawn = terminal.draw(|frame| render(frame, &app));
+    assert!(drawn.is_ok());
+    let content = buffer_to_string(&terminal);
+    assert!(
+        content.contains("line-39"),
+        "newest line should be visible while auto-following: {}",
+        content
+    );
+    assert!(
+        !content.contains("line-00"),
+        "oldest line should be clipped while auto-following: {}",
+        content
+    );
+
+    // Scrolling up reveals history; the render above primed the max offset.
+    app.scroll_orchestration_up(1000);
+    let drawn = terminal.draw(|frame| render(frame, &app));
+    assert!(drawn.is_ok());
+    let scrolled = buffer_to_string(&terminal);
+    assert!(
+        scrolled.contains("line-00"),
+        "oldest line should be reachable after scrolling up: {}",
+        scrolled
+    );
+
+    // End snaps back to auto-follow on the newest line.
+    app.scroll_orchestration_bottom();
+    let drawn = terminal.draw(|frame| render(frame, &app));
+    assert!(drawn.is_ok());
+    let back = buffer_to_string(&terminal);
+    assert!(
+        back.contains("line-39"),
+        "End should return focus to the newest line: {}",
+        back
     );
 }
 

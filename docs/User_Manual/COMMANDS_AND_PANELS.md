@@ -35,7 +35,7 @@ The onboarding interview (`maestro interview`, `maestro init`, or `/onboarding`)
 ## Workspace Mode Panels
 The monitor has four panels with explicit roles and a defined flow (input → orchestration → agent activity → readiness/actions). Press `Tab` to cycle focus deterministically.
 - **① Input**: receives slash commands and user prompts.
-- **② Orchestration**: chronological runtime narration. Maestro orchestration events appear here, including the `sense`, `plan`, `delegate`, `audit`, and `deliver` phases (🎼 per transition) and heartbeats (💓 while a worker runs longer than the threshold). The `sense` phase observes the incoming demand before planning.
+- **② Orchestration**: chronological runtime narration. Maestro orchestration events appear here, including the `sense`, `plan`, `delegate`, `audit`, and `deliver` phases (🎼 per transition) and heartbeats (💓 while a worker runs longer than the threshold). The `sense` phase observes the incoming demand before planning. The panel auto-follows the newest interaction; focus it with `Tab` and use `↑`/`↓` (or `PageUp`/`PageDown`, `Home`/`End`) to scroll back through history. `End` snaps back to the latest line and resumes auto-follow.
 - **③ Agent Activity**: agent names and lifecycle status (`idle`, `observe`, `think`, `act`, `error`).
 - **④ Readiness**: readiness checks and recommended next actions.
 

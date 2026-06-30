@@ -18,7 +18,7 @@ use futures_util::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::{Frame, Terminal};
 use tui_big_text::{BigText, PixelSize};
 use uuid::Uuid;
@@ -156,6 +156,12 @@ pub struct TuiApp {
     thinking_since: Option<std::time::Instant>,
     // Architect Mode directives picker
     architect_picker: Option<ArchitectPicker>,
+    // Orchestration panel scroll: number of rows scrolled up from the bottom.
+    // 0 keeps the panel auto-following the newest Maestro interaction.
+    orchestration_scroll: usize,
+    // Maximum scroll offset computed during the last render of the panel, used
+    // to clamp scroll-up input against the actual (wrapped) row count.
+    orchestration_max_scroll: std::cell::Cell<usize>,
 }
 
 #[derive(Debug, Clone, Default)]

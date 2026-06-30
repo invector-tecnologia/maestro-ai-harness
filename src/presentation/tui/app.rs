@@ -98,6 +98,29 @@ impl TuiApp {
         self.focus = self.focus.next();
     }
 
+    /// Scroll the Orchestration panel toward older interaction history.
+    /// Clamped against the last rendered row count so it never overscrolls.
+    pub(super) fn scroll_orchestration_up(&mut self, amount: usize) {
+        let max = self.orchestration_max_scroll.get();
+        self.orchestration_scroll = self.orchestration_scroll.saturating_add(amount).min(max);
+    }
+
+    /// Scroll the Orchestration panel back toward the newest interaction.
+    /// Reaching offset 0 re-enables auto-follow of incoming messages.
+    pub(super) fn scroll_orchestration_down(&mut self, amount: usize) {
+        self.orchestration_scroll = self.orchestration_scroll.saturating_sub(amount);
+    }
+
+    /// Jump to the oldest retained Orchestration history.
+    pub(super) fn scroll_orchestration_top(&mut self) {
+        self.orchestration_scroll = self.orchestration_max_scroll.get();
+    }
+
+    /// Snap back to the latest interaction and resume auto-follow.
+    pub(super) fn scroll_orchestration_bottom(&mut self) {
+        self.orchestration_scroll = 0;
+    }
+
     pub fn tick_animation(&mut self) {
         self.animation_frame = self.animation_frame.wrapping_add(1);
         self.normalize_readiness_selection();
@@ -503,6 +526,36 @@ impl TuiApp {
                     return None;
                 }
                 KeyCode::Char(_) | KeyCode::Backspace => {
+                    return None;
+                }
+                _ => {}
+            }
+        }
+
+        if self.focus == PanelFocus::Orchestration && self.wizard.is_none() {
+            match key.code {
+                KeyCode::Up => {
+                    self.scroll_orchestration_up(1);
+                    return None;
+                }
+                KeyCode::Down => {
+                    self.scroll_orchestration_down(1);
+                    return None;
+                }
+                KeyCode::PageUp => {
+                    self.scroll_orchestration_up(10);
+                    return None;
+                }
+                KeyCode::PageDown => {
+                    self.scroll_orchestration_down(10);
+                    return None;
+                }
+                KeyCode::Home => {
+                    self.scroll_orchestration_top();
+                    return None;
+                }
+                KeyCode::End => {
+                    self.scroll_orchestration_bottom();
                     return None;
                 }
                 _ => {}
